@@ -3,6 +3,7 @@ import { useAuth } from './hooks/useAuth'
 import ProtectedRoute from './components/ProtectedRoute'
 import AuthPage from './pages/AuthPage'
 import LibraryPage from './pages/LibraryPage'
+import ReaderPage from './pages/ReaderPage'
 
 function AppRoutes() {
   const { user, loading } = useAuth()
@@ -44,7 +45,7 @@ function AppRoutes() {
         path="/read/:docId"
         element={
           user
-            ? <ProtectedRoute><div className="text-white">Reader</div></ProtectedRoute>
+            ? <ProtectedRoute><ReaderPage /></ProtectedRoute>
             : <Navigate to="/login" replace />
         }
       />
