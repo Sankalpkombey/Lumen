@@ -22,13 +22,14 @@ export type Document = {
   id: string
   user_id: string
   name: string
-  cloudinary_url: string
-  public_id: string
+  file_url: string
+  storage_path: string
   status: 'unread' | 'reading' | 'finished'
   last_page: number
   total_pages: number
   created_at: string
   categories?: Category[]
+  document_categories?: { category_id: string; categories: Category }[]
 }
 
 export type Category = {

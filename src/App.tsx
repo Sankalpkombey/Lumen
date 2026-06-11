@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import ProtectedRoute from './components/ProtectedRoute'
 import AuthPage from './pages/AuthPage'
+import LibraryPage from './pages/LibraryPage'
 
 function AppRoutes() {
   const { user, loading } = useAuth()
@@ -35,7 +36,7 @@ function AppRoutes() {
         path="/library"
         element={
           user
-            ? <ProtectedRoute><div className="text-white">Library</div></ProtectedRoute>
+            ? <ProtectedRoute><LibraryPage /></ProtectedRoute>
             : <Navigate to="/login" replace />
         }
       />
