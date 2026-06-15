@@ -79,7 +79,7 @@ export type Note = {
   doc_id: string
   highlight_id: string | null  // optional — thought notes have no highlight
   tag_id: string | null        // optional — highlights don't need a tag
-  tag?: Tag                    // joined tag object when fetched
+  tags?: Tag                    // joined tag object when fetched
   content: string
   type: 'thought' | 'tagged'
   created_at: string

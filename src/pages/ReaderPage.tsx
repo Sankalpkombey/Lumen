@@ -1,17 +1,29 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { supabase, type Document } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import type { Document } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { usePDF } from '../hooks/usePDF'
+import { useAnnotations } from '../hooks/useAnnotations'
 import PDFViewer from '../components/reader/PDFViewer'
 import ReaderSidebar from '../components/reader/ReaderSidebar'
 import NotesPanel from '../components/reader/NotesPanel'
 import SelectionPicker from '../components/reader/SelectionPicker'
+import NoteModal from '../components/reader/NoteModal'
 
 interface Selection {
   text: string
   pageNumber: number
   position: { x: number; y: number }
+  rect: {
+    rects: Array<{ x: number; y: number; width: number; height: number }>
+    tagAnchor: { x: number; y: number; height: number }
+  }
+}
+
+interface PendingHighlight {
+  id: string
+  text: string
 }
 
 export default function ReaderPage() {
@@ -22,16 +34,24 @@ export default function ReaderPage() {
   const [doc, setDoc] = useState<Document | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [selection, setSelection] = useState<Selection | null>(null)
+  const [pendingHighlight, setPendingHighlight] = useState<PendingHighlight | null>(null)
+  const [showNoteModal, setShowNoteModal] = useState(false)
   const [loadingDoc, setLoadingDoc] = useState(true)
+  const scrollRef = useRef<((page: number) => void) | null>(null)
+  const [annotationFocus, setAnnotationFocus] = useState<string | null>(null)
 
   const { pdf, totalPages, loading: pdfLoading, error } = usePDF(
     doc?.file_url ?? ''
   )
 
+  const {
+    highlights, notes, tags,
+    saveHighlight, saveNote, saveTag,
+  } = useAnnotations(docId ?? '')
+
   // Fetch document
   useEffect(() => {
     if (!docId || !user) return
-
     async function fetchDoc() {
       const { data } = await supabase
         .from('documents')
@@ -45,28 +65,20 @@ export default function ReaderPage() {
       setCurrentPage(data.last_page ?? 1)
       setLoadingDoc(false)
     }
-
     fetchDoc()
   }, [docId, user, navigate])
 
-  // Save last page and total pages
+  // Save progress
   useEffect(() => {
     if (!docId || !currentPage) return
-
     const timer = setTimeout(() => {
-      supabase
-        .from('documents')
-        .update({
-          last_page: currentPage,
-          ...(totalPages > 0 && { total_pages: totalPages }),
-          status: totalPages > 0 && currentPage >= totalPages
-            ? 'finished'
-            : 'reading'
-        })
-        .eq('id', docId)
-        .then(() => {})
+      supabase.from('documents').update({
+        last_page: currentPage,
+        ...(totalPages > 0 && { total_pages: totalPages }),
+        status: totalPages > 0 && currentPage >= totalPages
+          ? 'finished' : 'reading',
+      }).eq('id', docId).then(() => { })
     }, 1500)
-
     return () => clearTimeout(timer)
   }, [currentPage, totalPages, docId])
 
@@ -75,38 +87,88 @@ export default function ReaderPage() {
   }, [])
 
   const handleTextSelect = useCallback((
-    text: string,
-    pageNumber: number,
-    rect: DOMRect
-  ) => {
-    setSelection({
-      text,
-      pageNumber,
-      position: { x: rect.left + rect.width / 2, y: rect.top }
-    })
-  }, [])
+  text: string,
+  pageNumber: number,
+  rect: DOMRect,
+  _pageRect: DOMRect,
+  positions: Array<{ x: number; y: number; width: number; height: number }>
+) => {
+  console.log('Positions captured:', positions)  // ← add this temporarily
+  console.log('Tag anchor will be:', {
+    x: positions[positions.length - 1].x + positions[positions.length - 1].width,
+    y: positions[positions.length - 1].y,
+    height: positions[positions.length - 1].height,
+  })
+
+  setSelection({
+    text,
+    pageNumber,
+    position: { x: rect.left + rect.width / 2, y: rect.top },
+    rect: {
+      rects: positions,
+      tagAnchor: {
+        x: positions[positions.length - 1].x + positions[positions.length - 1].width,
+        y: positions[positions.length - 1].y,
+        height: positions[positions.length - 1].height,
+      }
+    }
+  })
+}, [])
 
   const handleHighlight = useCallback(async (
-    color: string,
-    style: 'highlight' | 'underline'
+  color: string,
+  style: 'highlight' | 'underline'
+) => {
+  if (!selection) return
+  setSelection(null)
+
+  const highlight = await saveHighlight(
+    selection.text,
+    color,
+    style,
+    selection.pageNumber,
+    {
+      rects: selection.rect.rects,
+      tagAnchor: selection.rect.tagAnchor,
+    } as any
+  )
+
+  if (highlight) {
+    setPendingHighlight({ id: highlight.id, text: highlight.text })
+    setShowNoteModal(true)
+  }
+  
+  console.log('Highlights in reader:', highlights)
+
+  window.getSelection()?.removeAllRanges()
+}, [selection, saveHighlight])
+
+  const handleSaveNote = useCallback(async (
+    content: string,
+    tagId: string | null
   ) => {
-    if (!selection || !user || !docId) return
+    if (!pendingHighlight || !content.trim()) {
+      setShowNoteModal(false)
+      setPendingHighlight(null)
+      return
+    }
+    await saveNote(pendingHighlight.id, content, tagId)
+    setShowNoteModal(false)
+    setPendingHighlight(null)
+  }, [pendingHighlight, saveNote])
 
-    await supabase.from('highlights').insert({
-      user_id: user.id,
-      doc_id: docId,
-      page_number: selection.pageNumber,
-      text: selection.text,
-      color,
-      style,
-      position: { x: 0, y: 0, width: 0, height: 0 },
-    })
+  const handleScrollToPage = useCallback((page: number) => {
+    scrollRef.current?.(page)
+  }, [])
 
-    setSelection(null)
-    window.getSelection()?.removeAllRanges()
-  }, [selection, user, docId])
+  // Add this handler
+  const handleTagClick = useCallback((highlightId: string) => {
+    // Switch annotations tab and scroll to that card
+    setAnnotationFocus(highlightId)
+  }, [])
 
-  // Loading state
+
+
   if (loadingDoc || pdfLoading) {
     return (
       <div className="min-h-screen bg-[#141210] flex flex-col items-center justify-center gap-3">
@@ -159,12 +221,20 @@ export default function ReaderPage() {
           <PDFViewer
             pdf={pdf}
             currentPage={currentPage}
+            highlights={highlights}
+            notes={notes}
             onPageChange={handlePageChange}
             onTextSelect={handleTextSelect}
+            onTagClick={handleTagClick}
           />
         )}
 
-        <NotesPanel />
+        <NotesPanel
+          docId={docId ?? ''}
+          annotationFocus={annotationFocus}
+          onAnnotationFocused={() => setAnnotationFocus(null)}
+          onScrollToPage={handleScrollToPage}
+        />
       </div>
 
       {/* Selection picker */}
@@ -173,6 +243,24 @@ export default function ReaderPage() {
           position={selection.position}
           onHighlight={handleHighlight}
           onClose={() => setSelection(null)}
+        />
+      )}
+
+      {/* Note modal */}
+      {showNoteModal && pendingHighlight && (
+        <NoteModal
+          highlightText={pendingHighlight.text}
+          tags={tags}
+          onSave={handleSaveNote}
+          onCreateTag={saveTag}
+          onSkip={() => {
+            setShowNoteModal(false)
+            setPendingHighlight(null)
+          }}
+          onClose={() => {
+            setShowNoteModal(false)
+            setPendingHighlight(null)
+          }}
         />
       )}
     </div>

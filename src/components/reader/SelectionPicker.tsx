@@ -11,6 +11,7 @@ const COLORS = [
   { value: '#90EE90', label: 'Green' },
   { value: '#87CEEB', label: 'Blue' },
   { value: '#FFB6C1', label: 'Pink' },
+  { value: '#534AB7', label: 'Purple' },
 ]
 
 export default function SelectionPicker({ position, onHighlight, onClose }: Props) {
@@ -22,7 +23,7 @@ export default function SelectionPicker({ position, onHighlight, onClose }: Prop
         onClose()
       }
     }
-    document.addEventListener('mousedown', handleClick)
+    setTimeout(() => document.addEventListener('mousedown', handleClick), 100)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [onClose])
 
@@ -30,9 +31,12 @@ export default function SelectionPicker({ position, onHighlight, onClose }: Prop
     <div
       ref={ref}
       className="fixed z-50 bg-[#1c1a18] border border-white/12 rounded-2xl p-3 flex flex-col gap-2.5 shadow-xl"
-      style={{ top: position.y - 100, left: position.x - 80 }}
+      style={{
+        top: Math.max(10, position.y - 110),
+        left: Math.max(10, position.x - 90),
+      }}
     >
-      {/* Style toggle */}
+      {/* Style buttons */}
       <div className="flex gap-1.5">
         <button
           onClick={() => onHighlight('#FFD700', 'highlight')}
@@ -48,7 +52,7 @@ export default function SelectionPicker({ position, onHighlight, onClose }: Prop
         </button>
       </div>
 
-      {/* Color swatches */}
+      {/* Colors */}
       <div className="flex gap-2 justify-center">
         {COLORS.map(c => (
           <button

@@ -26,8 +26,10 @@ export function usePDF(url: string): UsePDFReturn {
 
         const loadingTask = pdfjsLib.getDocument({
           url,
-          cMapUrl: '/cmaps/',   // local — served by Vite from public folder
+          cMapUrl: '/cmaps/',
           cMapPacked: true,
+          standardFontDataUrl: '/standard_fonts/',
+          disableFontFace: false,
         })
 
         const pdfDoc = await loadingTask.promise
@@ -48,4 +50,4 @@ export function usePDF(url: string): UsePDFReturn {
   }, [url])
 
   return { pdf, totalPages, loading, error }
-}
+}
