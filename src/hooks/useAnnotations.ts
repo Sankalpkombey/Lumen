@@ -23,10 +23,6 @@ export function useAnnotations(docId: string) {
   color: string,
   style: 'highlight' | 'underline',
   pageNumber: number,
-  position: {
-    rects: Array<{ x: number; y: number; width: number; height: number }>
-    tagAnchor: { x: number; y: number; height: number }
-  }
 ): Promise<Highlight | null> {
   if (!user) return null
 
@@ -39,7 +35,7 @@ export function useAnnotations(docId: string) {
       color,
       style,
       page_number: pageNumber,
-      position,   // saves {rects: [...], tagAnchor: {...}}
+      position: {},   // empty — we match by text content now
     })
     .select()
     .single()

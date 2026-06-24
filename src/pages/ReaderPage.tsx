@@ -91,26 +91,16 @@ export default function ReaderPage() {
   pageNumber: number,
   rect: DOMRect,
   _pageRect: DOMRect,
-  positions: Array<{ x: number; y: number; width: number; height: number }>
+  positions: Array<{ x: number; y: number; width: number; height: number }>,
+  tagAnchor: { x: number; y: number; height: number }
 ) => {
-  console.log('Positions captured:', positions)  // ← add this temporarily
-  console.log('Tag anchor will be:', {
-    x: positions[positions.length - 1].x + positions[positions.length - 1].width,
-    y: positions[positions.length - 1].y,
-    height: positions[positions.length - 1].height,
-  })
-
   setSelection({
     text,
     pageNumber,
-    position: { x: rect.left + rect.width / 2, y: rect.top },
+    position: { x: tagAnchor.x, y: tagAnchor.y },
     rect: {
       rects: positions,
-      tagAnchor: {
-        x: positions[positions.length - 1].x + positions[positions.length - 1].width,
-        y: positions[positions.length - 1].y,
-        height: positions[positions.length - 1].height,
-      }
+      tagAnchor,
     }
   })
 }, [])
@@ -127,18 +117,12 @@ export default function ReaderPage() {
     color,
     style,
     selection.pageNumber,
-    {
-      rects: selection.rect.rects,
-      tagAnchor: selection.rect.tagAnchor,
-    } as any
   )
 
   if (highlight) {
     setPendingHighlight({ id: highlight.id, text: highlight.text })
     setShowNoteModal(true)
   }
-  
-  console.log('Highlights in reader:', highlights)
 
   window.getSelection()?.removeAllRanges()
 }, [selection, saveHighlight])

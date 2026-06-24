@@ -1,43 +1,149 @@
 @import "tailwindcss";
 
-/* PDF.js text layer */
-.textLayer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  line-height: 1;
-  user-select: text;
-  -webkit-user-select: text;
+/* ── PDF page ─────────────────────────────────────── */
+.pdf-page-wrapper {
+  overflow: visible !important;
 }
 
-.textLayer span {
+.pdf-page-wrapper canvas {
+  image-rendering: auto;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Text layer — extracted from PDF.js v6 pdf_viewer.css
+   Only the rules needed for proper text selection.
+   ═══════════════════════════════════════════════════════ */
+.textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+     -moz-text-size-adjust: none;
+          text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 2;
+
+  /* CSS custom properties set by PDF.js TextLayer */
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+/* Span and BR positioning */
+.textLayer :is(span, br) {
   color: transparent;
   position: absolute;
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
-  /* Smooth font rendering */
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  -webkit-user-select: text;
+     -moz-user-select: text;
+          user-select: text;
 }
 
+/* Font sizing and transforms via CSS custom properties */
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+/* markedContent wrappers are transparent containers */
+.textLayer .markedContent {
+  display: contents;
+}
+
+/* ── Selection highlight ─────────────────────────── */
 .textLayer ::selection {
-  background: rgba(83, 74, 183, 0.3);
+  background: rgba(66, 133, 244, 0.3);
   color: transparent;
 }
 
-/* Page wrapper */
-.pdf-page-wrapper {
-  overflow: visible !important;
+.textLayer ::-moz-selection {
+  background: rgba(66, 133, 244, 0.3);
+  color: transparent;
 }
 
-/* Highlight layer */
+/* ── endOfContent — the key to full-line selection ── */
+/* Normally sits below the content (inset: 100% 0 0).
+   When .selecting is added, it stretches to cover the
+   full page (top: 0), allowing the browser selection to
+   flow continuously across all text spans.             */
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+}
+
+/* When mouse is down and selecting, stretch endOfContent to cover the page */
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Highlight layer & custom overlays
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Highlight layer (between canvas and text) ── */
 .highlight-layer {
   overflow: visible !important;
+  pointer-events: none;
+  z-index: 1;
 }
 
-/* Canvas — crisp rendering */
-.pdf-page-wrapper canvas {
-  image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
+/* ── Highlight rectangles — overlay approach ── */
+.highlight-rect {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 3px;
+  mix-blend-mode: multiply;
+  transition: opacity 0.15s ease;
+}
+
+/* Underline variant */
+.highlight-rect--underline {
+  mix-blend-mode: normal;
+  border-radius: 0;
+  height: 2.5px !important;
+}
+
+/* ── Tag chips in highlight layer ── */
+.highlight-tag-chip {
+  position: absolute;
+  pointer-events: all;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  z-index: 10;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  line-height: 1.5;
+}
+
+.highlight-tag-chip:hover {
+  transform: scale(1.06);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
 }
