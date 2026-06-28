@@ -34,6 +34,7 @@ export default function PDFViewer({
   const renderingRef = useRef(false)
   const pagesReadyRef = useRef(false)
   const pagesRef = useRef<Map<number, HTMLDivElement>>(new Map())
+  const applyHighlightsRef = useRef<() => void>(() => {})
   const [displayScale, setDisplayScale] = useState(120)
 
   // ─── Overlay-based highlight rendering ──────────────────────────────────
@@ -43,15 +44,6 @@ export default function PDFViewer({
     // Clear previous overlay highlights and tag chips
     containerRef.current.querySelectorAll('.highlight-rect').forEach(el => el.remove())
     containerRef.current.querySelectorAll('.highlight-tag-chip').forEach(el => el.remove())
-
-    // Also unwrap any old <mark> wrappers from previous implementation
-    containerRef.current.querySelectorAll('.lumen-highlight').forEach(el => {
-      const parent = el.parentNode
-      if (!parent) return
-      while (el.firstChild) parent.insertBefore(el.firstChild, el)
-      parent.removeChild(el)
-    })
-    containerRef.current.querySelectorAll('.lumen-tag-chip').forEach(el => el.remove())
 
     highlights.forEach(highlight => {
       const pageWrapper = containerRef.current?.querySelector(
@@ -71,72 +63,83 @@ export default function PDFViewer({
       const highlightText = highlight.text.trim()
       if (!highlightText) return
 
-      // Get all text spans in this page
-      const spans = Array.from(
-        textLayer.querySelectorAll('span[role="presentation"], span')
-      ).filter(s => s.textContent && s.textContent.trim().length > 0)
-
-      // Build a map of cumulative character positions
-      let cumulative = 0
-      const spanMap: Array<{
-        span: Element
-        start: number
-        end: number
-        text: string
-      }> = []
-
-      spans.forEach(span => {
-        const text = span.textContent ?? ''
-        spanMap.push({
-          span,
-          start: cumulative,
-          end: cumulative + text.length,
-          text,
-        })
-        cumulative += text.length
-      })
-
-      const fullText = spanMap.map(s => s.text).join('')
-
-      // Find the highlight text — try exact match first
-      let matchStart = fullText.indexOf(highlightText)
-
-      // If not found, try normalizing whitespace
-      if (matchStart === -1) {
-        const normalizedFull = fullText.replace(/\s+/g, ' ')
-        const normalizedHighlight = highlightText.replace(/\s+/g, ' ')
-        matchStart = normalizedFull.indexOf(normalizedHighlight)
-      }
-
-      if (matchStart === -1) return
-
-      const matchEnd = matchStart + highlightText.length
-
-      // Find only the spans that fall within matchStart to matchEnd
-      const spansToMark = spanMap.filter(s =>
-        s.end > matchStart && s.start < matchEnd
+      // Walk only actual text nodes via TreeWalker to avoid markedContent
+      // wrapper duplication that causes extra characters in concatenated text
+      const walker = document.createTreeWalker(
+        textLayer,
+        NodeFilter.SHOW_TEXT,
+        null
       )
 
-      if (spansToMark.length === 0) return
+      let fullText = ''
+      const charToSpan: Element[] = []
+      let tNode: Node | null
+      while ((tNode = walker.nextNode())) {
+        const txt = tNode.textContent ?? ''
+        if (!txt.trim()) continue
+        const parentSpan = (tNode as Text).parentElement
+        if (!parentSpan || parentSpan.tagName !== 'SPAN') continue
+        if (parentSpan.classList.contains('markedContent')) continue
+        if (parentSpan.classList.contains('endOfContent')) continue
+        for (let i = 0; i < txt.length; i++) {
+          charToSpan.push(parentSpan)
+        }
+        fullText += txt
+      }
+
+      // Multi-strategy text matching
+      let matchStart = -1
+      let matchEnd = -1
+
+      // Strategy 1: exact match
+      const exactIdx = fullText.indexOf(highlightText)
+      if (exactIdx !== -1) {
+        matchStart = exactIdx
+        matchEnd = exactIdx + highlightText.length
+      }
+
+      // Strategy 2: whitespace-stripped matching with position mapping
+      if (matchStart === -1) {
+        const origPositions: number[] = []
+        let strippedFull = ''
+        for (let i = 0; i < fullText.length; i++) {
+          if (!/\s/.test(fullText[i])) {
+            origPositions.push(i)
+            strippedFull += fullText[i]
+          }
+        }
+        const strippedHighlight = highlightText.replace(/\s/g, '')
+        const strippedIdx = strippedFull.indexOf(strippedHighlight)
+        if (strippedIdx !== -1 && strippedIdx + strippedHighlight.length - 1 < origPositions.length) {
+          matchStart = origPositions[strippedIdx]
+          matchEnd = origPositions[strippedIdx + strippedHighlight.length - 1] + 1
+        }
+      }
+
+      if (matchStart === -1 || matchEnd === -1) return
+
+      // Collect unique spans that contain matched characters
+      const matchedSpans = new Set<Element>()
+      for (let i = matchStart; i < matchEnd && i < charToSpan.length; i++) {
+        matchedSpans.add(charToSpan[i])
+      }
+
+      if (matchedSpans.size === 0) return
 
       const note = notes.find(n => n.highlight_id === highlight.id)
       const tag = (note?.tags as any) ?? null
-
-      // Get the page wrapper's bounding rect for coordinate conversion
       const pageRect = pageWrapper.getBoundingClientRect()
 
-      // Create overlay rectangles for each matching span
       let lastRect: { left: number; top: number; width: number; height: number } | null = null
 
-      spansToMark.forEach(({ span }) => {
+      matchedSpans.forEach(span => {
         const spanRect = span.getBoundingClientRect()
+        if (spanRect.width === 0 || spanRect.height === 0) return
 
-        // Convert to page-relative coordinates
         const relLeft = spanRect.left - pageRect.left
         const relTop = spanRect.top - pageRect.top
 
         if (highlight.style === 'underline') {
-          // For underline: thin line at the bottom of the span
           const underline = document.createElement('div')
           underline.className = 'highlight-rect highlight-rect--underline'
           underline.style.cssText = `
@@ -149,7 +152,6 @@ export default function PDFViewer({
           `
           highlightLayer.appendChild(underline)
         } else {
-          // For highlight: colored rectangle behind the text
           const rect = document.createElement('div')
           rect.className = 'highlight-rect'
           rect.style.cssText = `
@@ -158,7 +160,7 @@ export default function PDFViewer({
             width: ${spanRect.width}px;
             height: ${spanRect.height}px;
             background: ${highlight.color};
-            opacity: 0.35;
+            opacity: 0.4;
           `
           highlightLayer.appendChild(rect)
         }
@@ -192,6 +194,9 @@ export default function PDFViewer({
       }
     })
   }, [highlights, notes, onTagClick])
+
+  // Keep ref in sync so render effect can call latest version without depending on it
+  applyHighlightsRef.current = applyHighlightsToTextLayer
 
   // Calculate best scale for the container width
   const getOptimalScale = useCallback(() => {
@@ -252,7 +257,7 @@ export default function PDFViewer({
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  // Highlight layer — sits between canvas and text layer
+  // Highlight layer — sits above text layer for visible highlights
   const highlightLayer = document.createElement('div')
   highlightLayer.className = 'highlight-layer'
   highlightLayer.dataset.page = String(pageNumber)
@@ -263,6 +268,7 @@ export default function PDFViewer({
     height: ${cssViewport.height}px;
     pointer-events: none;
     overflow: visible;
+    z-index: 3;
   `
 
   // Text layer — on top for selection
@@ -277,10 +283,10 @@ export default function PDFViewer({
   textLayerDiv.style.setProperty('--scale-round-x', '1px')
   textLayerDiv.style.setProperty('--scale-round-y', '1px')
 
-  // Order: canvas → highlight layer → text layer
+  // Order: canvas → text layer → highlight layer (highlight on top with pointer-events: none)
   pageWrapper.appendChild(canvas)
-  pageWrapper.appendChild(highlightLayer)
   pageWrapper.appendChild(textLayerDiv)
+  pageWrapper.appendChild(highlightLayer)
   containerRef.current.appendChild(pageWrapper)
   pagesRef.current.set(pageNumber, pageWrapper)
 
@@ -337,16 +343,23 @@ export default function PDFViewer({
     }
     renderingRef.current = false
     pagesReadyRef.current = true
-    applyHighlightsToTextLayer()
+    // Call via ref so this effect doesn't depend on highlights/notes
+    applyHighlightsRef.current()
   }
 
   renderAll()
-}, [pdf, renderPage, applyHighlightsToTextLayer, getOptimalScale])
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [pdf, renderPage, getOptimalScale])
 
   // ─── Redraw when highlights or notes update ───────────────────────────────
   useEffect(() => {
     if (pagesReadyRef.current) {
-      applyHighlightsToTextLayer()
+      // Use rAF to ensure text layer spans have been laid out before
+      // reading their bounding rects for overlay positioning
+      const id = requestAnimationFrame(() => {
+        applyHighlightsToTextLayer()
+      })
+      return () => cancelAnimationFrame(id)
     }
   }, [highlights, notes, applyHighlightsToTextLayer])
 
@@ -569,16 +582,16 @@ export default function PDFViewer({
       }
       renderingRef.current = false
       pagesReadyRef.current = true
-      applyHighlightsToTextLayer()
+      applyHighlightsRef.current()
     }
     renderAll()
   }
 
   return (
-    <div className="flex-1 overflow-y-auto bg-[#141210] px-6 py-6">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[#141210]">
 
-      {/* Zoom controls — buttons go here */}
-      <div className="flex items-center justify-center gap-2 mb-4">
+      {/* Zoom controls — sticky bar */}
+      <div className="flex items-center justify-center gap-2 py-2 flex-shrink-0 border-b border-white/5">
         <button
           onClick={() => {
             scaleRef.current = Math.max(0.5, scaleRef.current - 0.15)
@@ -602,8 +615,10 @@ export default function PDFViewer({
         </button>
       </div>
 
-      {/* Pages render here */}
-      <div ref={containerRef} className="flex flex-col items-center" />
+      {/* Scrollable pages area */}
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div ref={containerRef} className="flex flex-col items-center" />
+      </div>
     </div>
   )
 }
