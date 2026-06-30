@@ -19,6 +19,7 @@ interface Selection {
     rects: Array<{ x: number; y: number; width: number; height: number }>
     tagAnchor: { x: number; y: number; height: number }
   }
+  rangeInfo?: any
 }
 
 interface PendingHighlight {
@@ -87,37 +88,40 @@ export default function ReaderPage() {
   }, [])
 
   const handleTextSelect = useCallback((
-  text: string,
-  pageNumber: number,
-  rect: DOMRect,
-  _pageRect: DOMRect,
-  positions: Array<{ x: number; y: number; width: number; height: number }>,
-  tagAnchor: { x: number; y: number; height: number }
-) => {
-  setSelection({
-    text,
-    pageNumber,
-    position: { x: tagAnchor.x, y: tagAnchor.y },
-    rect: {
-      rects: positions,
-      tagAnchor,
-    }
-  })
-}, [])
+    text: string,
+    pageNumber: number,
+    rect: DOMRect,
+    _pageRect: DOMRect,
+    positions: Array<{ x: number; y: number; width: number; height: number }>,
+    tagAnchor: { x: number; y: number; height: number },
+    rangeInfo?: any
+  ) => {
+    setSelection({
+      text,
+      pageNumber,
+      position: { x: tagAnchor.x, y: tagAnchor.y },
+      rect: {
+        rects: positions,
+        tagAnchor,
+      },
+      rangeInfo
+    })
+  }, [])
 
   const handleHighlight = useCallback(async (
-  color: string,
-  style: 'highlight' | 'underline'
-) => {
-  if (!selection) return
-  setSelection(null)
+    color: string,
+    style: 'highlight' | 'underline'
+  ) => {
+    if (!selection) return
+    setSelection(null)
 
-  const highlight = await saveHighlight(
-    selection.text,
-    color,
-    style,
-    selection.pageNumber,
-  )
+    const highlight = await saveHighlight(
+      selection.text,
+      color,
+      style,
+      selection.pageNumber,
+      selection.rangeInfo
+    )
 
   if (highlight) {
     setPendingHighlight({ id: highlight.id, text: highlight.text })
@@ -181,45 +185,33 @@ export default function ReaderPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#141210] flex flex-col">
+    <div className="h-screen w-screen bg-[#141210] grid grid-cols-[280px_1fr_360px] overflow-hidden">
+      <ReaderSidebar
+        doc={doc}
+        currentPage={currentPage}
+        totalPages={totalPages}
+      />
 
-      {/* Top bar */}
-      <div className="h-10 bg-[#1c1a18] border-b border-white/7 flex items-center justify-between px-4 flex-shrink-0">
-        <span className="text-xs text-[#5a5855] truncate max-w-xs">
-          {doc.name.replace('.pdf', '')}
-        </span>
-        <span className="text-xs text-[#3a3835]">
-          p.{currentPage} / {totalPages}
-        </span>
-      </div>
-
-      {/* Main layout */}
-      <div className="flex flex-1 overflow-hidden">
-        <ReaderSidebar
-          doc={doc}
+      {pdf && (
+        <PDFViewer
+          pdf={pdf}
           currentPage={currentPage}
+          highlights={highlights}
+          notes={notes}
+          onPageChange={handlePageChange}
+          onTextSelect={handleTextSelect}
+          onTagClick={handleTagClick}
+          docName={doc.name}
           totalPages={totalPages}
         />
+      )}
 
-        {pdf && (
-          <PDFViewer
-            pdf={pdf}
-            currentPage={currentPage}
-            highlights={highlights}
-            notes={notes}
-            onPageChange={handlePageChange}
-            onTextSelect={handleTextSelect}
-            onTagClick={handleTagClick}
-          />
-        )}
-
-        <NotesPanel
-          docId={docId ?? ''}
-          annotationFocus={annotationFocus}
-          onAnnotationFocused={() => setAnnotationFocus(null)}
-          onScrollToPage={handleScrollToPage}
-        />
-      </div>
+      <NotesPanel
+        docId={docId ?? ''}
+        annotationFocus={annotationFocus}
+        onAnnotationFocused={() => setAnnotationFocus(null)}
+        onScrollToPage={handleScrollToPage}
+      />
 
       {/* Selection picker */}
       {selection && (

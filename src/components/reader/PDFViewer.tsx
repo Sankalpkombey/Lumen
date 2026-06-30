@@ -15,9 +15,12 @@ interface Props {
     rect: DOMRect,
     pageRect: DOMRect,
     positions: Array<{ x: number; y: number; width: number; height: number }>,
-    tagAnchor: { x: number; y: number; height: number }
+    tagAnchor: { x: number; y: number; height: number },
+    rangeInfo?: any
   ) => void
   onTagClick: (highlightId: string) => void
+  docName: string
+  totalPages: number
 }
 
 export default function PDFViewer({
@@ -28,6 +31,8 @@ export default function PDFViewer({
   onPageChange,
   onTextSelect,
   onTagClick,
+  docName,
+  totalPages,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const scaleRef = useRef(1.2)
@@ -63,77 +68,27 @@ export default function PDFViewer({
       const highlightText = highlight.text.trim()
       if (!highlightText) return
 
-      // Walk only actual text nodes via TreeWalker to avoid markedContent
-      // wrapper duplication that causes extra characters in concatenated text
-      const walker = document.createTreeWalker(
-        textLayer,
-        NodeFilter.SHOW_TEXT,
-        null
-      )
+      let range: Range | null = null
+      const pos = highlight.position as any
 
-      let fullText = ''
-      const charToSpan: Element[] = []
-      let tNode: Node | null
-      while ((tNode = walker.nextNode())) {
-        const txt = tNode.textContent ?? ''
-        if (!txt.trim()) continue
-        const parentSpan = (tNode as Text).parentElement
-        if (!parentSpan || parentSpan.tagName !== 'SPAN') continue
-        if (parentSpan.classList.contains('markedContent')) continue
-        if (parentSpan.classList.contains('endOfContent')) continue
-        for (let i = 0; i < txt.length; i++) {
-          charToSpan.push(parentSpan)
-        }
-        fullText += txt
+      if (pos && typeof pos.startSpanIndex === 'number' && typeof pos.startOffset === 'number') {
+        range = restoreRange(textLayer, pos.startSpanIndex, pos.startOffset, pos.endSpanIndex, pos.endOffset)
       }
 
-      // Multi-strategy text matching
-      let matchStart = -1
-      let matchEnd = -1
-
-      // Strategy 1: exact match
-      const exactIdx = fullText.indexOf(highlightText)
-      if (exactIdx !== -1) {
-        matchStart = exactIdx
-        matchEnd = exactIdx + highlightText.length
+      if (!range) {
+        range = findRangeFromText(textLayer, highlight.text)
       }
 
-      // Strategy 2: whitespace-stripped matching with position mapping
-      if (matchStart === -1) {
-        const origPositions: number[] = []
-        let strippedFull = ''
-        for (let i = 0; i < fullText.length; i++) {
-          if (!/\s/.test(fullText[i])) {
-            origPositions.push(i)
-            strippedFull += fullText[i]
-          }
-        }
-        const strippedHighlight = highlightText.replace(/\s/g, '')
-        const strippedIdx = strippedFull.indexOf(strippedHighlight)
-        if (strippedIdx !== -1 && strippedIdx + strippedHighlight.length - 1 < origPositions.length) {
-          matchStart = origPositions[strippedIdx]
-          matchEnd = origPositions[strippedIdx + strippedHighlight.length - 1] + 1
-        }
-      }
-
-      if (matchStart === -1 || matchEnd === -1) return
-
-      // Collect unique spans that contain matched characters
-      const matchedSpans = new Set<Element>()
-      for (let i = matchStart; i < matchEnd && i < charToSpan.length; i++) {
-        matchedSpans.add(charToSpan[i])
-      }
-
-      if (matchedSpans.size === 0) return
+      if (!range) return
 
       const note = notes.find(n => n.highlight_id === highlight.id)
       const tag = (note?.tags as any) ?? null
       const pageRect = pageWrapper.getBoundingClientRect()
+      const rects = range.getClientRects()
 
       let lastRect: { left: number; top: number; width: number; height: number } | null = null
 
-      matchedSpans.forEach(span => {
-        const spanRect = span.getBoundingClientRect()
+      Array.from(rects).forEach(spanRect => {
         if (spanRect.width === 0 || spanRect.height === 0) return
 
         const relLeft = spanRect.left - pageRect.left
@@ -517,20 +472,38 @@ export default function PDFViewer({
     // Find page
     let node: Node | null = range.commonAncestorContainer
     let pageNumber = currentPage
+    let textLayer: HTMLElement | null = null
     while (node) {
       const el = node as HTMLElement
+      if (el.classList?.contains('textLayer')) {
+        textLayer = el
+      }
       if (el.dataset?.page && el.classList?.contains('pdf-page-wrapper')) {
         pageNumber = Number(el.dataset.page)
         break
       }
-      if (el.classList?.contains('textLayer')) {
-        const pw = el.closest('.pdf-page-wrapper') as HTMLElement
-        if (pw?.dataset?.page) {
-          pageNumber = Number(pw.dataset.page)
-          break
+      node = node.parentNode
+    }
+
+    if (!textLayer && range.commonAncestorContainer) {
+      const ancestorEl = (range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+        ? range.commonAncestorContainer.parentElement
+        : range.commonAncestorContainer) as HTMLElement | null
+      textLayer = ancestorEl?.closest('.textLayer') as HTMLElement | null
+    }
+
+    let rangeInfo: any = null
+    if (textLayer) {
+      const startInfo = getContainerInfo(range.startContainer, range.startOffset, textLayer)
+      const endInfo = getContainerInfo(range.endContainer, range.endOffset, textLayer)
+      if (startInfo && endInfo) {
+        rangeInfo = {
+          startSpanIndex: startInfo.spanIndex,
+          startOffset: startInfo.offset,
+          endSpanIndex: endInfo.spanIndex,
+          endOffset: endInfo.offset
         }
       }
-      node = node.parentNode
     }
 
     // Anchor at end of selection for picker positioning
@@ -547,7 +520,8 @@ export default function PDFViewer({
       boundingRect,
       new DOMRect(),
       [],
-      { x: lastClientRect.right, y: lastClientRect.bottom, height: lastClientRect.height }
+      { x: lastClientRect.right, y: lastClientRect.bottom, height: lastClientRect.height },
+      rangeInfo
     )
   }
 
@@ -590,6 +564,16 @@ export default function PDFViewer({
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#141210]">
 
+      {/* Top bar */}
+      <div className="h-10 bg-[#1c1a18] border-b border-white/7 flex items-center justify-between px-4 flex-shrink-0">
+        <span className="text-xs text-[#5a5855] truncate max-w-xs font-medium">
+          {docName.replace('.pdf', '')}
+        </span>
+        <span className="text-xs text-[#3a3835]">
+          p.{currentPage} / {totalPages}
+        </span>
+      </div>
+
       {/* Zoom controls — sticky bar */}
       <div className="flex items-center justify-center gap-2 py-2 flex-shrink-0 border-b border-white/5">
         <button
@@ -621,4 +605,179 @@ export default function PDFViewer({
       </div>
     </div>
   )
+}
+
+function getContainerInfo(container: Node, offset: number, textLayerDiv: HTMLElement) {
+  const spans = Array.from(textLayerDiv.querySelectorAll('span:not(.endOfContent)'));
+  
+  let targetSpan: HTMLElement | null = null;
+  
+  if (container === textLayerDiv) {
+    const child = textLayerDiv.childNodes[offset];
+    if (child) {
+      targetSpan = (child.nodeType === Node.ELEMENT_NODE ? child : child.parentElement) as HTMLElement | null;
+    }
+  } else if (container.nodeType === Node.TEXT_NODE) {
+    targetSpan = container.parentElement as HTMLElement | null;
+  } else if (container.nodeType === Node.ELEMENT_NODE) {
+    targetSpan = container as HTMLElement;
+  }
+  
+  if (!targetSpan) return null;
+  
+  while (targetSpan && targetSpan.parentElement !== textLayerDiv) {
+    targetSpan = targetSpan.parentElement as HTMLElement | null;
+  }
+  
+  if (!targetSpan) return null;
+  
+  const spanIndex = spans.indexOf(targetSpan);
+  if (spanIndex === -1) return null;
+  
+  let calculatedOffset = 0;
+  if (container.nodeType === Node.TEXT_NODE) {
+    const walk = document.createTreeWalker(targetSpan, NodeFilter.SHOW_TEXT);
+    let currentNode: Node | null;
+    while ((currentNode = walk.nextNode())) {
+      if (currentNode === container) {
+        calculatedOffset += offset;
+        break;
+      }
+      calculatedOffset += currentNode.textContent?.length ?? 0;
+    }
+  } else {
+    calculatedOffset = offset;
+  }
+  
+  return {
+    spanIndex,
+    offset: calculatedOffset
+  };
+}
+
+function restoreRange(
+  textLayerDiv: HTMLElement,
+  startSpanIndex: number,
+  startOffset: number,
+  endSpanIndex: number,
+  endOffset: number
+): Range | null {
+  const spans = Array.from(textLayerDiv.querySelectorAll('span:not(.endOfContent)'));
+  const startSpan = spans[startSpanIndex] as HTMLElement | null;
+  const endSpan = spans[endSpanIndex] as HTMLElement | null;
+  
+  if (!startSpan || !endSpan) return null;
+  
+  const range = document.createRange();
+  
+  function findTextNodeAndOffset(span: HTMLElement, targetOffset: number) {
+    const walk = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+    let currentNode: Node | null;
+    let currentLength = 0;
+    
+    while ((currentNode = walk.nextNode())) {
+      const nodeLength = currentNode.textContent?.length ?? 0;
+      if (currentLength + nodeLength >= targetOffset) {
+        return {
+          node: currentNode,
+          offset: targetOffset - currentLength
+        };
+      }
+      currentLength += nodeLength;
+    }
+    
+    return {
+      node: span.lastChild || span,
+      offset: span.lastChild ? Math.min(targetOffset - currentLength, span.lastChild.textContent?.length ?? 0) : 0
+    };
+  }
+  
+  const start = findTextNodeAndOffset(startSpan, startOffset);
+  const end = findTextNodeAndOffset(endSpan, endOffset);
+  
+  try {
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    return range;
+  } catch (e) {
+    console.error("Error restoring range:", e);
+    return null;
+  }
+}
+
+function findRangeFromText(textLayerDiv: HTMLElement, textToFind: string): Range | null {
+  const spans = Array.from(textLayerDiv.querySelectorAll('span:not(.endOfContent)'));
+  let fullText = '';
+  const charToSpan: { span: HTMLElement; indexInSpan: number }[] = [];
+  
+  for (const span of spans) {
+    const txt = span.textContent ?? '';
+    for (let i = 0; i < txt.length; i++) {
+      charToSpan.push({ span: span as HTMLElement, indexInSpan: i });
+    }
+    fullText += txt;
+  }
+  
+  const matchIndex = fullText.indexOf(textToFind);
+  if (matchIndex === -1) {
+    const normalizedFind = textToFind.replace(/\s/g, '');
+    let strippedFull = '';
+    const origIndex: number[] = [];
+    for (let i = 0; i < fullText.length; i++) {
+      if (!/\s/.test(fullText[i])) {
+        origIndex.push(i);
+        strippedFull += fullText[i];
+      }
+    }
+    const strippedIdx = strippedFull.indexOf(normalizedFind);
+    if (strippedIdx !== -1 && strippedIdx + normalizedFind.length - 1 < origIndex.length) {
+      const startCharIdx = origIndex[strippedIdx];
+      const endCharIdx = origIndex[strippedIdx + normalizedFind.length - 1] + 1;
+      return createRangeFromCharIndices(startCharIdx, endCharIdx, charToSpan);
+    }
+    return null;
+  }
+  
+  return createRangeFromCharIndices(matchIndex, matchIndex + textToFind.length, charToSpan);
+}
+
+function createRangeFromCharIndices(
+  startIdx: number,
+  endIdx: number,
+  charToSpan: { span: HTMLElement; indexInSpan: number }[]
+): Range | null {
+  if (startIdx < 0 || endIdx > charToSpan.length) return null;
+  
+  const startInfo = charToSpan[startIdx];
+  const endInfo = charToSpan[endIdx - 1];
+  
+  if (!startInfo || !endInfo) return null;
+  
+  const range = document.createRange();
+  
+  function findTextNodeAndOffset(span: HTMLElement, targetOffset: number) {
+    const walk = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+    let currentNode: Node | null;
+    let currentLength = 0;
+    while ((currentNode = walk.nextNode())) {
+      const len = currentNode.textContent?.length ?? 0;
+      if (currentLength + len >= targetOffset) {
+        return { node: currentNode, offset: targetOffset - currentLength };
+      }
+      currentLength += len;
+    }
+    return { node: span.lastChild || span, offset: targetOffset - currentLength };
+  }
+  
+  const start = findTextNodeAndOffset(startInfo.span, startInfo.indexInSpan);
+  const end = findTextNodeAndOffset(endInfo.span, endInfo.indexInSpan + 1);
+  
+  try {
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    return range;
+  } catch (e) {
+    console.error("Error creating range from indices:", e);
+    return null;
+  }
 }

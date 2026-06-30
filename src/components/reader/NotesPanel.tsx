@@ -32,7 +32,7 @@ export default function NotesPanel({
   }, [annotationFocus])
 
   return (
-    <div className="w-64 bg-[#1c1a18] border-l border-white/7 flex flex-col overflow-hidden flex-shrink-0">
+    <div className="w-[360px] h-full bg-[#1c1a18] border-l border-white/7 flex flex-col overflow-hidden flex-shrink-0">
 
       {/* Tabs */}
       <div className="flex gap-1 p-2 border-b border-white/7 flex-shrink-0">

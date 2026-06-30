@@ -56,12 +56,7 @@ export type Highlight = {
   text: string
   color: string
   style: HighlightStyle        // highlight or underline
-  position: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }
+  position: any
   created_at: string
 }
 

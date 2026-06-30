@@ -15,7 +15,7 @@ export default function ReaderSidebar({ doc, currentPage, totalPages }: Props) {
     : 0
 
   return (
-    <div className="w-52 bg-[#1c1a18] border-r border-white/7 flex flex-col overflow-hidden flex-shrink-0">
+    <div className="w-[280px] h-full bg-[#1c1a18] border-r border-white/7 flex flex-col overflow-y-auto flex-shrink-0">
 
       {/* Back */}
       <button

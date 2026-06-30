@@ -19,31 +19,32 @@ export function useAnnotations(docId: string) {
   }, [docId, user])
 
   async function saveHighlight(
-  text: string,
-  color: string,
-  style: 'highlight' | 'underline',
-  pageNumber: number,
-): Promise<Highlight | null> {
-  if (!user) return null
+    text: string,
+    color: string,
+    style: 'highlight' | 'underline',
+    pageNumber: number,
+    rangeInfo?: any
+  ): Promise<Highlight | null> {
+    if (!user) return null
 
-  const { data, error } = await supabase
-    .from('highlights')
-    .insert({
-      user_id: user.id,
-      doc_id: docId,
-      text,
-      color,
-      style,
-      page_number: pageNumber,
-      position: {},   // empty — we match by text content now
-    })
-    .select()
-    .single()
+    const { data, error } = await supabase
+      .from('highlights')
+      .insert({
+        user_id: user.id,
+        doc_id: docId,
+        text,
+        color,
+        style,
+        page_number: pageNumber,
+        position: rangeInfo || {},
+      })
+      .select()
+      .single()
 
-  if (error || !data) return null
-  addHighlight(data)
-  return data
-}
+    if (error || !data) return null
+    addHighlight(data)
+    return data
+  }
 
   async function saveNote(
     highlightId: string,
