@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { TextLayer } from 'pdfjs-dist'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { Highlight, Note } from '../../lib/supabase'
+import { ZoomControl, useZoom } from './ZoomControl'
 
 interface Props {
   pdf: PDFDocumentProxy
@@ -38,13 +39,58 @@ export default function PDFViewer({
   leftCollapsed,
   rightCollapsed,
 }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const scaleRef = useRef(1.2)
+  const [nativePageSize, setNativePageSize] = useState<{ width: number; height: number } | null>(null)
   const renderingRef = useRef(false)
   const pagesReadyRef = useRef(false)
   const pagesRef = useRef<Map<number, HTMLDivElement>>(new Map())
   const applyHighlightsRef = useRef<() => void>(() => {})
-  const [displayScale, setDisplayScale] = useState(120)
+
+  const [rerenderTrigger, setRerenderTrigger] = useState(0)
+  const rerender = useCallback(() => {
+    setRerenderTrigger(prev => prev + 1)
+  }, [])
+
+  const {
+    scale,
+    zoomMode,
+    renderedScale,
+    outerContainerRef,
+    scrollContainerRef,
+    containerRef,
+    setFixedZoom,
+    setAutoZoom,
+    setPageWidth,
+    setPageFit,
+    zoomIn,
+    zoomOut,
+    renderCompleteCallbackRef,
+  } = useZoom({
+    pdf,
+    nativePageSize,
+    pagesRef,
+    rerender,
+  })
+
+  // Fetch native page width and height from first page
+  useEffect(() => {
+    if (!pdf) return
+    let active = true
+    async function getPageSize() {
+      try {
+        const page = await pdf.getPage(1)
+        const viewport = page.getViewport({ scale: 1 })
+        if (active) {
+          setNativePageSize({ width: viewport.width, height: viewport.height })
+        }
+      } catch (e) {
+        console.error("Error getting page size:", e)
+      }
+    }
+    getPageSize()
+    return () => {
+      active = false
+    }
+  }, [pdf])
 
   // ─── Overlay-based highlight rendering ──────────────────────────────────
   const applyHighlightsToTextLayer = useCallback(() => {
@@ -157,158 +203,166 @@ export default function PDFViewer({
   // Keep ref in sync so render effect can call latest version without depending on it
   applyHighlightsRef.current = applyHighlightsToTextLayer
 
-  // Calculate best scale for the container width
-  const getOptimalScale = useCallback(() => {
-  const container = containerRef.current
-  if (!container) return 1.5
-  const containerWidth = container.clientWidth - 80  // padding
-  const standardPageWidth = 612  // standard PDF width in points
-  const calculated = containerWidth / standardPageWidth
-  // Clamp between 1.2 and 2.0
-  return Math.min(2.0, Math.max(1.2, calculated))
-}, [])
-
   // ─── Render a single page ─────────────────────────────────────────────────
-  const renderPage = useCallback(async (pageNumber: number) => {
-  if (!pdf || !containerRef.current) return
+  // ─── Render a single page ─────────────────────────────────────────────────
+  const renderPage = useCallback(async (
+    pageNumber: number,
+    targetContainer: HTMLElement | DocumentFragment,
+    newPagesMap: Map<number, HTMLDivElement>
+  ) => {
+    if (!pdf || renderedScale === 0) return
 
-  const page = await pdf.getPage(pageNumber)
-  const dpr = window.devicePixelRatio || 1
-  const baseScale = scaleRef.current
+    const page = await pdf.getPage(pageNumber)
+    const dpr = window.devicePixelRatio || 1
+    const baseScale = renderedScale
 
-  // Two viewports — one for layout, one for rendering
-  const cssViewport = page.getViewport({ scale: baseScale })
-  const renderViewport = page.getViewport({ scale: baseScale * dpr })
+    // Two viewports — one for layout, one for rendering
+    const cssViewport = page.getViewport({ scale: baseScale })
+    const renderViewport = page.getViewport({ scale: baseScale * dpr })
 
-  // Page wrapper — CSS size
-  const pageWrapper = document.createElement('div')
-  pageWrapper.className = 'pdf-page-wrapper'
-  pageWrapper.dataset.page = String(pageNumber)
-  pageWrapper.style.cssText = `
-    position: relative;
-    margin: 0 auto 20px;
-    width: ${cssViewport.width}px;
-    height: ${cssViewport.height}px;
-    background: #ffffff;
-    border-radius: 2px;
-    overflow: visible;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 4px 24px rgba(0,0,0,0.18);
-  `
+    // Page wrapper — CSS size
+    const pageWrapper = document.createElement('div')
+    pageWrapper.className = 'pdf-page-wrapper'
+    pageWrapper.dataset.page = String(pageNumber)
+    pageWrapper.style.cssText = `
+      position: relative;
+      margin: 0 auto 20px;
+      width: ${cssViewport.width}px;
+      height: ${cssViewport.height}px;
+      background: #ffffff;
+      border-radius: 2px;
+      overflow: visible;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 4px 24px rgba(0,0,0,0.18);
+    `
 
-  // Canvas — physical pixel size
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d', { alpha: false })!
+    // Canvas — physical pixel size
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d', { alpha: false })!
 
-  canvas.width = Math.floor(renderViewport.width)
-  canvas.height = Math.floor(renderViewport.height)
+    canvas.width = Math.floor(renderViewport.width)
+    canvas.height = Math.floor(renderViewport.height)
 
-  // Force canvas to display at CSS size
-  canvas.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: ${cssViewport.width}px;
-    height: ${cssViewport.height}px;
-    display: block;
-  `
+    // Force canvas to display at CSS size
+    canvas.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: ${cssViewport.width}px;
+      height: ${cssViewport.height}px;
+      display: block;
+    `
 
-  // Fill white before render — prevents grey flash
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+    // Fill white before render — prevents grey flash
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  // Highlight layer — sits above text layer for visible highlights
-  const highlightLayer = document.createElement('div')
-  highlightLayer.className = 'highlight-layer'
-  highlightLayer.dataset.page = String(pageNumber)
-  highlightLayer.style.cssText = `
-    position: absolute;
-    top: 0; left: 0;
-    width: ${cssViewport.width}px;
-    height: ${cssViewport.height}px;
-    pointer-events: none;
-    overflow: visible;
-    z-index: 3;
-  `
+    // Highlight layer — sits above text layer for visible highlights
+    const highlightLayer = document.createElement('div')
+    highlightLayer.className = 'highlight-layer'
+    highlightLayer.dataset.page = String(pageNumber)
+    highlightLayer.style.cssText = `
+      position: absolute;
+      top: 0; left: 0;
+      width: ${cssViewport.width}px;
+      height: ${cssViewport.height}px;
+      pointer-events: none;
+      overflow: visible;
+      z-index: 3;
+    `
 
-  // Text layer — on top for selection
-  const textLayerDiv = document.createElement('div')
-  textLayerDiv.className = 'textLayer'
-  textLayerDiv.dataset.page = String(pageNumber)
-  textLayerDiv.tabIndex = 0
+    // Text layer — on top for selection
+    const textLayerDiv = document.createElement('div')
+    textLayerDiv.className = 'textLayer'
+    textLayerDiv.dataset.page = String(pageNumber)
+    textLayerDiv.tabIndex = 0
 
-  // Set CSS custom properties required by PDF.js TextLayer CSS
-  // --total-scale-factor = viewport.scale (mirrors the viewer's --scale-factor * --user-unit)
-  textLayerDiv.style.setProperty('--total-scale-factor', String(cssViewport.scale))
-  textLayerDiv.style.setProperty('--scale-round-x', '1px')
-  textLayerDiv.style.setProperty('--scale-round-y', '1px')
+    // Set CSS custom properties required by PDF.js TextLayer CSS
+    textLayerDiv.style.setProperty('--total-scale-factor', String(cssViewport.scale))
+    textLayerDiv.style.setProperty('--scale-round-x', '1px')
+    textLayerDiv.style.setProperty('--scale-round-y', '1px')
 
-  // Order: canvas → text layer → highlight layer (highlight on top with pointer-events: none)
-  pageWrapper.appendChild(canvas)
-  pageWrapper.appendChild(textLayerDiv)
-  pageWrapper.appendChild(highlightLayer)
-  containerRef.current.appendChild(pageWrapper)
-  pagesRef.current.set(pageNumber, pageWrapper)
+    // Order: canvas → text layer → highlight layer (highlight on top with pointer-events: none)
+    pageWrapper.appendChild(canvas)
+    pageWrapper.appendChild(textLayerDiv)
+    pageWrapper.appendChild(highlightLayer)
+    targetContainer.appendChild(pageWrapper)
+    newPagesMap.set(pageNumber, pageWrapper)
 
-  // Render at full DPI
-  await page.render({
-    canvas: canvas,
-    canvasContext: ctx,
-    viewport: renderViewport,
-    intent: 'display',
-    annotationMode: 0,
-  }).promise
+    // Render at full DPI
+    await page.render({
+      canvas: canvas,
+      canvasContext: ctx,
+      viewport: renderViewport,
+      intent: 'display',
+      annotationMode: 0,
+    }).promise
 
-  // Text layer at CSS viewport for correct selection positions
-  const textContent = await page.getTextContent({
-    includeMarkedContent: true,
-  })
+    // Text layer at CSS viewport for correct selection positions
+    const textContent = await page.getTextContent({
+      includeMarkedContent: true,
+    })
 
-  const textLayer = new TextLayer({
-    textContentSource: textContent,
-    container: textLayerDiv,
-    viewport: cssViewport,
-  })
-  await textLayer.render()
+    const textLayer = new TextLayer({
+      textContentSource: textContent,
+      container: textLayerDiv,
+      viewport: cssViewport,
+    })
+    await textLayer.render()
 
-  // ── endOfContent div — enables full-line text selection (same as PDF.js viewer) ──
-  const endOfContent = document.createElement('div')
-  endOfContent.className = 'endOfContent'
-  textLayerDiv.appendChild(endOfContent)
+    // ── endOfContent div — enables full-line text selection (same as PDF.js viewer) ──
+    const endOfContent = document.createElement('div')
+    endOfContent.className = 'endOfContent'
+    textLayerDiv.appendChild(endOfContent)
 
-  // Bind mouse: add "selecting" class on mousedown so endOfContent stretches
-  textLayerDiv.addEventListener('mousedown', () => {
-    textLayerDiv.classList.add('selecting')
-  })
+    // Bind mouse: add "selecting" class on mousedown so endOfContent stretches
+    textLayerDiv.addEventListener('mousedown', () => {
+      textLayerDiv.classList.add('selecting')
+    })
 
-}, [pdf])
+  }, [pdf, renderedScale])
 
   // ─── Render all pages ─────────────────────────────────────────────────────
   useEffect(() => {
-  if (!pdf || !containerRef.current || renderingRef.current) return
+    if (!pdf || !containerRef.current || renderedScale === 0) return
 
-  // Set optimal scale on first render
-  if (scaleRef.current === 1.2) {
-    scaleRef.current = getOptimalScale()
-  }
+    renderingRef.current = true
+    pagesReadyRef.current = false
 
-  renderingRef.current = true
-  pagesReadyRef.current = false
-  containerRef.current.innerHTML = ''
-  pagesRef.current.clear()
+    let active = true
 
-  async function renderAll() {
-    for (let i = 1; i <= pdf.numPages; i++) {
-      await renderPage(i)
+    async function renderAll() {
+      const fragment = document.createDocumentFragment()
+      const newPagesMap = new Map<number, HTMLDivElement>()
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        if (!active) break
+        await renderPage(i, fragment, newPagesMap)
+      }
+
+      if (active && containerRef.current) {
+        containerRef.current.innerHTML = ''
+        containerRef.current.appendChild(fragment)
+
+        pagesRef.current.clear()
+        newPagesMap.forEach((val, key) => {
+          pagesRef.current.set(key, val)
+        })
+
+        renderingRef.current = false
+        pagesReadyRef.current = true
+        applyHighlightsRef.current()
+
+        if (renderCompleteCallbackRef.current) {
+          renderCompleteCallbackRef.current()
+        }
+      }
     }
-    renderingRef.current = false
-    pagesReadyRef.current = true
-    // Call via ref so this effect doesn't depend on highlights/notes
-    applyHighlightsRef.current()
-  }
 
-  renderAll()
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, [pdf, renderPage, getOptimalScale])
+    renderAll()
+    return () => {
+      active = false
+    }
+  }, [pdf, renderedScale, renderPage, rerenderTrigger])
 
   // ─── Redraw when highlights or notes update ───────────────────────────────
   useEffect(() => {
@@ -545,28 +599,8 @@ export default function PDFViewer({
     }
   }, [scrollToPage])
 
-  function rerender() {
-    if (renderingRef.current) return
-    setDisplayScale(Math.round(scaleRef.current * 100))
-    renderingRef.current = false
-    pagesReadyRef.current = false
-    if (containerRef.current) containerRef.current.innerHTML = ''
-    pagesRef.current.clear()
-
-    async function renderAll() {
-      renderingRef.current = true
-      for (let i = 1; i <= pdf.numPages; i++) {
-        await renderPage(i)
-      }
-      renderingRef.current = false
-      pagesReadyRef.current = true
-      applyHighlightsRef.current()
-    }
-    renderAll()
-  }
-
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-[#141210]">
+    <div ref={outerContainerRef} className="flex-1 flex flex-col overflow-hidden bg-[#141210]">
 
       {/* Top bar */}
       <div className="h-10 bg-[#1c1a18] border-b border-white/7 flex items-center justify-between px-4 flex-shrink-0">
@@ -580,32 +614,21 @@ export default function PDFViewer({
 
       {/* Zoom controls — sticky bar */}
       <div className="flex items-center justify-center gap-2 py-2 flex-shrink-0 border-b border-white/5">
-        <button
-          onClick={() => {
-            scaleRef.current = Math.max(0.5, scaleRef.current - 0.15)
-            rerender()
-          }}
-          className="w-7 h-7 rounded-lg bg-[#1c1a18] border border-white/8 text-[#a09d98] hover:text-[#f0ede8] text-lg flex items-center justify-center transition-colors"
-        >
-          -
-        </button>
-        <span className="text-xs text-[#5a5855] w-12 text-center">
-          {displayScale}%
-        </span>
-        <button
-          onClick={() => {
-            scaleRef.current = Math.min(3, scaleRef.current + 0.15)
-            rerender()
-          }}
-          className="w-7 h-7 rounded-lg bg-[#1c1a18] border border-white/8 text-[#a09d98] hover:text-[#f0ede8] text-lg flex items-center justify-center transition-colors"
-        >
-          +
-        </button>
+        <ZoomControl
+          scale={scale}
+          zoomMode={zoomMode}
+          zoomIn={zoomIn}
+          zoomOut={zoomOut}
+          setFixedZoom={setFixedZoom}
+          setAutoZoom={setAutoZoom}
+          setPageWidth={setPageWidth}
+          setPageFit={setPageFit}
+        />
       </div>
 
       {/* Scrollable pages area */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div ref={containerRef} className="flex flex-col items-center" />
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-6">
+        <div ref={containerRef} className="flex flex-col items-center" style={{ transition: 'transform 100ms ease-out' }} />
       </div>
     </div>
   )

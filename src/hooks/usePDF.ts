@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { pdfjsLib } from '../lib/pdfSetup'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { supabase } from '../lib/supabase'
 
 interface UsePDFReturn {
   pdf: PDFDocumentProxy | null
@@ -9,7 +10,7 @@ interface UsePDFReturn {
   error: string | null
 }
 
-export function usePDF(url: string): UsePDFReturn {
+export function usePDF(url: string, storagePath?: string): UsePDFReturn {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -24,8 +25,26 @@ export function usePDF(url: string): UsePDFReturn {
         setLoading(true)
         setError(null)
 
+        let pdfInput: string | Uint8Array = url
+
+        if (storagePath) {
+          const { data: blob, error: downloadError } = await supabase.storage
+            .from('documents')
+            .download(storagePath)
+
+          if (downloadError) {
+            throw downloadError
+          }
+
+          if (blob) {
+            const arrayBuffer = await blob.arrayBuffer()
+            pdfInput = new Uint8Array(arrayBuffer)
+          }
+        }
+
         const loadingTask = pdfjsLib.getDocument({
-          url,
+          url: typeof pdfInput === 'string' ? pdfInput : undefined,
+          data: pdfInput instanceof Uint8Array ? pdfInput : undefined,
           cMapUrl: '/cmaps/',
           cMapPacked: true,
           standardFontDataUrl: '/standard_fonts/',
@@ -39,6 +58,7 @@ export function usePDF(url: string): UsePDFReturn {
           setTotalPages(pdfDoc.numPages)
         }
       } catch (err) {
+        console.error('Failed to load PDF:', err)
         if (!cancelled) setError('Failed to load PDF')
       } finally {
         if (!cancelled) setLoading(false)
@@ -47,7 +67,7 @@ export function usePDF(url: string): UsePDFReturn {
 
     loadPDF()
     return () => { cancelled = true }
-  }, [url])
+  }, [url, storagePath])
 
   return { pdf, totalPages, loading, error }
 }

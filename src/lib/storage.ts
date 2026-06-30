@@ -8,7 +8,7 @@ export interface UploadResult {
 export async function uploadPDF(
   file: File,
   userId: string,
-  onProgress?: (percent: number) => void
+  _onProgress?: (percent: number) => void
 ): Promise<UploadResult> {
   // Unique path per user so files never collide
   const fileName = `${Date.now()}-${file.name.replace(/\s/g, '_')}`

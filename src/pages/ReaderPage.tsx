@@ -45,7 +45,8 @@ export default function ReaderPage() {
   const [rightCollapsed, toggleRight] = usePanelState('lumen-sidebar-right-collapsed', true)
 
   const { pdf, totalPages, loading: pdfLoading, error } = usePDF(
-    doc?.file_url ?? ''
+    doc?.file_url ?? '',
+    doc?.storage_path
   )
 
   const {
@@ -117,7 +118,7 @@ export default function ReaderPage() {
   const handleTextSelect = useCallback((
     text: string,
     pageNumber: number,
-    rect: DOMRect,
+    _rect: DOMRect,
     _pageRect: DOMRect,
     positions: Array<{ x: number; y: number; width: number; height: number }>,
     tagAnchor: { x: number; y: number; height: number },

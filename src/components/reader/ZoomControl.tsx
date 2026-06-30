@@ -1,15 +1,16 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 interface ZoomControlProps {
   scale: number
-  zoomMode: 'auto-fit' | 'page-width' | 'fixed'
+  zoomMode: 'auto' | 'pageWidth' | 'pageFit' | 'fixed'
   zoomIn: () => void
   zoomOut: () => void
   setFixedZoom: (scale: number) => void
-  setAutoFit: () => void
+  setAutoZoom: () => void
   setPageWidth: () => void
+  setPageFit: () => void
 }
 
 interface ZoomOption {
@@ -19,9 +20,10 @@ interface ZoomOption {
 }
 
 const presetOptions: ZoomOption[] = [
-  { value: 'auto-fit', label: 'Automatic Zoom' },
+  { value: 'auto', label: 'Automatic Zoom' },
   { value: 'actual', label: 'Actual Size' },
-  { value: 'page-width', label: 'Page Width' },
+  { value: 'pageFit', label: 'Page Fit' },
+  { value: 'pageWidth', label: 'Page Width' },
   { value: 'divider', label: '', isDivider: true },
   { value: '0.5', label: '50%' },
   { value: '0.75', label: '75%' },
@@ -33,9 +35,10 @@ const presetOptions: ZoomOption[] = [
   { value: '4.0', label: '400%' },
 ]
 
-function getZoomLabel(mode: 'auto-fit' | 'page-width' | 'fixed', scale: number) {
-  if (mode === 'auto-fit') return 'Automatic Zoom'
-  if (mode === 'page-width') return 'Page Width'
+function getZoomLabel(mode: 'auto' | 'pageWidth' | 'pageFit' | 'fixed', scale: number) {
+  if (mode === 'auto') return 'Automatic Zoom'
+  if (mode === 'pageWidth') return 'Page Width'
+  if (mode === 'pageFit') return 'Page Fit'
   return `${Math.round(scale * 100)}%`
 }
 
@@ -45,25 +48,27 @@ export function ZoomControl({
   zoomIn,
   zoomOut,
   setFixedZoom,
-  setAutoFit,
+  setAutoZoom,
   setPageWidth,
+  setPageFit,
 }: ZoomControlProps) {
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   // Compute activeValue for selection matching
   let activeValue = ''
-  if (zoomMode === 'auto-fit') {
-    activeValue = 'auto-fit'
-  } else if (zoomMode === 'page-width') {
-    activeValue = 'page-width'
+  if (zoomMode === 'auto') {
+    activeValue = 'auto'
+  } else if (zoomMode === 'pageWidth') {
+    activeValue = 'pageWidth'
+  } else if (zoomMode === 'pageFit') {
+    activeValue = 'pageFit'
   } else {
     const rounded = Math.round(scale * 100) / 100
     activeValue = String(rounded)
   }
 
-  const presetsValues = ['auto-fit', 'actual', 'page-width', '0.5', '0.75', '1.0', '1.25', '1.5', '2.0', '3.0', '4.0']
-  // Match active value or 1.0/actual
+  const presetsValues = ['auto', 'actual', 'pageFit', 'pageWidth', '0.5', '0.75', '1.0', '1.25', '1.5', '2.0', '3.0', '4.0']
   const isPreset = presetsValues.includes(activeValue) || (activeValue === '1' && presetsValues.includes('1.0'))
 
   useEffect(() => {
@@ -80,7 +85,7 @@ export function ZoomControl({
 
   const dropdownOptions = [...presetOptions]
   if (!isPreset && zoomMode === 'fixed') {
-    dropdownOptions.splice(4, 0, {
+    dropdownOptions.splice(5, 0, {
       value: activeValue,
       label: `${Math.round(scale * 100)}%`
     })
@@ -130,8 +135,9 @@ export function ZoomControl({
               }
 
               const isSelected =
-                (opt.value === 'auto-fit' && zoomMode === 'auto-fit') ||
-                (opt.value === 'page-width' && zoomMode === 'page-width') ||
+                (opt.value === 'auto' && zoomMode === 'auto') ||
+                (opt.value === 'pageWidth' && zoomMode === 'pageWidth') ||
+                (opt.value === 'pageFit' && zoomMode === 'pageFit') ||
                 (opt.value === 'actual' && zoomMode === 'fixed' && Math.abs(scale - 1.0) < 0.01) ||
                 (zoomMode === 'fixed' && parseFloat(opt.value) === scale)
 
@@ -139,10 +145,12 @@ export function ZoomControl({
                 <button
                   key={opt.value}
                   onClick={() => {
-                    if (opt.value === 'auto-fit') {
-                      setAutoFit()
-                    } else if (opt.value === 'page-width') {
+                    if (opt.value === 'auto') {
+                      setAutoZoom()
+                    } else if (opt.value === 'pageWidth') {
                       setPageWidth()
+                    } else if (opt.value === 'pageFit') {
+                      setPageFit()
                     } else if (opt.value === 'actual') {
                       setFixedZoom(1.0)
                     } else {
@@ -153,7 +161,7 @@ export function ZoomControl({
                     }
                     setIsOpen(false)
                   }}
-                  className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center justify-between cursor-pointer select-none`}
+                  className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center justify-between cursor-pointer select-none"
                   style={{
                     backgroundColor: isSelected
                       ? 'rgba(83,74,183,0.15)'
@@ -218,9 +226,9 @@ export function useZoom({
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Core Zoom States
-  const [zoomMode, setZoomMode] = useState<'auto-fit' | 'page-width' | 'fixed'>(() => {
+  const [zoomMode, setZoomMode] = useState<'auto' | 'pageWidth' | 'pageFit' | 'fixed'>(() => {
     const saved = localStorage.getItem(`lumen-zoom-mode-${docId}`)
-    return (saved as any) || 'auto-fit'
+    return (saved as any) || 'auto'
   })
 
   const [fixedScale, setFixedScale] = useState<number>(() => {
@@ -229,14 +237,13 @@ export function useZoom({
   })
 
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null)
-  const [renderedScale, setRenderedScale] = useState<number>(1.0)
+  const [renderedScale, setRenderedScale] = useState<number>(0)
 
   // Zoom anchors for restoring scroll position
   const zoomAnchorRef = useRef<{
     pageNumber: number
     documentY: number
     viewY: number
-    // diagnostics
     scrollTopBefore: number
     clientHeightBefore: number
     anchorPageHeightBefore: number
@@ -261,59 +268,57 @@ export function useZoom({
     }
   }, [zoomMode, fixedScale, docId])
 
-  // Reset to auto-fit when PDF changes
+  // Restore saved scale/mode per document when pdf changes
   useEffect(() => {
-    setZoomMode('auto-fit')
-  }, [pdf])
+    if (docId) {
+      const savedMode = localStorage.getItem(`lumen-zoom-mode-${docId}`)
+      const savedScale = localStorage.getItem(`lumen-zoom-scale-${docId}`)
+      if (savedMode) {
+        setZoomMode(savedMode as any)
+      } else {
+        setZoomMode('auto')
+      }
+      if (savedScale) {
+        setFixedScale(parseFloat(savedScale))
+      }
+    }
+  }, [pdf, docId])
 
   // Derived target scale
   let scale = fixedScale
   if (nativePageSize && containerSize) {
-    if (zoomMode === 'page-width') {
+    if (zoomMode === 'pageWidth') {
       const availableWidth = containerSize.width - 96 // horizontal padding/margins
       scale = Math.max(0.5, availableWidth / nativePageSize.width)
-    } else if (zoomMode === 'auto-fit') {
-      const availableHeight = containerSize.height - 48 // vertical padding/margins
-      scale = Math.max(0.5, availableHeight / nativePageSize.height)
+    } else if (zoomMode === 'pageFit') {
+      const availableWidth = containerSize.width - 96
+      const availableHeight = containerSize.height - 48
+      const scaleW = availableWidth / nativePageSize.width
+      const scaleH = availableHeight / nativePageSize.height
+      scale = Math.max(0.5, Math.min(scaleW, scaleH))
+    } else if (zoomMode === 'auto') {
+      // Automatic Zoom: fit to width but clamp max scale to 1.5
+      const availableWidth = containerSize.width - 96
+      const calculated = availableWidth / nativePageSize.width
+      scale = Math.min(1.5, Math.max(0.5, calculated))
     }
   }
 
-  // Helper to capture active screen anchor centered on viewport
-  const captureViewportCenterAnchor = useCallback(() => {
+  // Helper to capture active screen anchor at a specific viewport offset (e.g. mouse position)
+  const captureAnchorAtViewportPoint = useCallback((_viewX: number, viewY: number) => {
     const scrollContainer = scrollContainerRef.current
     if (!scrollContainer) return
 
     const containerRect = scrollContainer.getBoundingClientRect()
-    const viewY = containerRect.height / 2
     const anchorY = scrollContainer.scrollTop + viewY
     const captureTimestamp = performance.now()
 
-    console.group('[ZOOM DIAG] ══════ Zoom Action Initiated ══════')
-    console.log('  scale (before)         :', renderedScale)
-    console.log('  scrollTop (before)     :', scrollContainer.scrollTop)
-    console.log('  clientHeight (before)  :', scrollContainer.clientHeight)
-    console.log('  viewportCenterAnchorY  :', anchorY, '(scrollTop + clientHeight/2)')
-
     const pageElements = scrollContainer.querySelectorAll('.pdf-page-wrapper')
-    let foundAnchorPageNum = -1
-
     if (pageElements.length > 0) {
       let closestPageNum = 1
       let closestPageEl: HTMLElement | null = null
       let minDistance = Infinity
       let found = false
-
-      // Compute cumulative document-space height up to each page for diagnostics
-      const pageTops: Array<{ pageNum: number; documentTop: number; renderedTop: number; renderedHeight: number }> = []
-
-      for (let i = 0; i < pageElements.length; i++) {
-        const el = pageElements[i] as HTMLElement
-        const pageNum = Number(el.dataset.page)
-        const pageRect = el.getBoundingClientRect()
-        const renderedTop = pageRect.top - containerRect.top + scrollContainer.scrollTop
-        const renderedHeight = pageRect.height
-        pageTops.push({ pageNum, documentTop: renderedTop / renderedScale, renderedTop, renderedHeight })
-      }
 
       for (let i = 0; i < pageElements.length; i++) {
         const el = pageElements[i] as HTMLElement
@@ -323,10 +328,8 @@ export function useZoom({
         const bottom = top + pageRect.height
 
         if (anchorY >= top && anchorY <= bottom) {
-          const documentY = (anchorY - top) / renderedScale
-          // Cumulative rendered height of all pages ABOVE this page
-          const cumulativeHeightAbove = top // top already equals sum of all content above in scroll space
-          foundAnchorPageNum = pageNum
+          const documentY = (anchorY - top) / (renderedScale || 1.0)
+          const cumulativeHeightAbove = top
 
           zoomAnchorRef.current = {
             pageNumber: pageNum,
@@ -336,21 +339,9 @@ export function useZoom({
             clientHeightBefore: scrollContainer.clientHeight,
             anchorPageHeightBefore: pageRect.height,
             cumulativeHeightAboveBefore: cumulativeHeightAbove,
-            scaleAtCapture: renderedScale,
+            scaleAtCapture: renderedScale || 1.0,
             captureTimestamp,
           }
-
-          console.log(`  anchor page            : ${pageNum}`)
-          console.log(`  anchor page height     : ${pageRect.height.toFixed(1)}px (actual DOM)`)
-          if (nativePageSize) {
-            const expectedH = renderedScale * nativePageSize.height
-            const diff = pageRect.height - expectedH
-            console.log(`  expected height        : ${expectedH.toFixed(1)}px (renderedScale × nativeH)`)
-            console.log(`  height discrepancy     : ${diff.toFixed(2)}px ${Math.abs(diff) > 1 ? '⚠️ MISMATCH' : '✓ ok'}`)
-          }
-          console.log(`  cumulative height above: ${cumulativeHeightAbove.toFixed(1)}px`)
-          console.log(`  documentY in page      : ${documentY.toFixed(2)} native-px`)
-          console.log('  all page tops (before):', pageTops)
           found = true
           break
         }
@@ -367,9 +358,8 @@ export function useZoom({
       if (!found && closestPageEl) {
         const pageRect = closestPageEl.getBoundingClientRect()
         const top = pageRect.top - containerRect.top + scrollContainer.scrollTop
-        const documentY = Math.max(0, Math.min(pageRect.height, anchorY - top)) / renderedScale
+        const documentY = Math.max(0, Math.min(pageRect.height, anchorY - top)) / (renderedScale || 1.0)
         const cumulativeHeightAbove = top
-        foundAnchorPageNum = closestPageNum
 
         zoomAnchorRef.current = {
           pageNumber: closestPageNum,
@@ -379,40 +369,46 @@ export function useZoom({
           clientHeightBefore: scrollContainer.clientHeight,
           anchorPageHeightBefore: pageRect.height,
           cumulativeHeightAboveBefore: cumulativeHeightAbove,
-          scaleAtCapture: renderedScale,
+          scaleAtCapture: renderedScale || 1.0,
           captureTimestamp,
         }
-
-        console.log(`  anchor page (closest)  : ${closestPageNum}`)
-        console.log(`  anchor page height     : ${pageRect.height.toFixed(1)}px`)
-        if (nativePageSize) {
-          const expectedH = renderedScale * nativePageSize.height
-          console.log(`  expected height        : ${expectedH.toFixed(1)}px`)
-        }
-        console.log(`  cumulative above       : ${cumulativeHeightAbove.toFixed(1)}px`)
-        console.log('  all page tops (before):', pageTops)
       }
     }
-
-    console.groupEnd()
-  }, [renderedScale, scale, nativePageSize])
+  }, [renderedScale])
 
   // Exposed API triggers
   const setFixedZoom = useCallback((newScale: number) => {
-    captureViewportCenterAnchor()
+    const scrollContainer = scrollContainerRef.current
+    if (scrollContainer) {
+      captureAnchorAtViewportPoint(scrollContainer.clientWidth / 2, scrollContainer.clientHeight / 2)
+    }
     setZoomMode('fixed')
     setFixedScale(newScale)
-  }, [captureViewportCenterAnchor])
+  }, [captureAnchorAtViewportPoint])
 
-  const setAutoFit = useCallback(() => {
-    captureViewportCenterAnchor()
-    setZoomMode('auto-fit')
-  }, [captureViewportCenterAnchor])
+  const setAutoZoom = useCallback(() => {
+    const scrollContainer = scrollContainerRef.current
+    if (scrollContainer) {
+      captureAnchorAtViewportPoint(scrollContainer.clientWidth / 2, scrollContainer.clientHeight / 2)
+    }
+    setZoomMode('auto')
+  }, [captureAnchorAtViewportPoint])
 
   const setPageWidth = useCallback(() => {
-    captureViewportCenterAnchor()
-    setZoomMode('page-width')
-  }, [captureViewportCenterAnchor])
+    const scrollContainer = scrollContainerRef.current
+    if (scrollContainer) {
+      captureAnchorAtViewportPoint(scrollContainer.clientWidth / 2, scrollContainer.clientHeight / 2)
+    }
+    setZoomMode('pageWidth')
+  }, [captureAnchorAtViewportPoint])
+
+  const setPageFit = useCallback(() => {
+    const scrollContainer = scrollContainerRef.current
+    if (scrollContainer) {
+      captureAnchorAtViewportPoint(scrollContainer.clientWidth / 2, scrollContainer.clientHeight / 2)
+    }
+    setZoomMode('pageFit')
+  }, [captureAnchorAtViewportPoint])
 
   const presets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
 
@@ -421,6 +417,8 @@ export function useZoom({
     const next = [...presets].reverse().find(p => p < current - 0.01)
     if (next !== undefined) {
       setFixedZoom(next)
+    } else {
+      setFixedZoom(Math.max(0.5, current - 0.1))
     }
   }, [scale, setFixedZoom])
 
@@ -429,10 +427,12 @@ export function useZoom({
     const next = presets.find(p => p > current + 0.01)
     if (next !== undefined) {
       setFixedZoom(next)
+    } else {
+      setFixedZoom(Math.min(4.0, current + 0.1))
     }
   }, [scale, setFixedZoom])
 
-  // ResizeObserver watching stable outer parent container (Step 2)
+  // ResizeObserver watching stable outer parent container
   useEffect(() => {
     const outerEl = outerContainerRef.current
     if (!outerEl) return
@@ -450,10 +450,58 @@ export function useZoom({
     return () => observer.disconnect()
   }, [])
 
-  // Immediate CSS transform (Step A) & debounced actual rerender (Step B)
+  const recalculateScale = useCallback((containerWidth: number) => {
+    if (!nativePageSize) return
+    const availableWidth = containerWidth - 96
+    const calculated = availableWidth / nativePageSize.width
+    const clamped = Math.min(3.0, Math.max(0.5, calculated))
+    setFixedScale(clamped)
+  }, [nativePageSize])
+
+  // Set up ResizeObserver to auto-fit container size changes
+  const resizeTimeoutRef = useRef<number | null>(null)
+  useEffect(() => {
+    const scrollable = scrollContainerRef.current
+    if (!scrollable || !nativePageSize) return
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const width = entry.contentRect.width
+
+      if (resizeTimeoutRef.current) {
+        window.clearTimeout(resizeTimeoutRef.current)
+      }
+
+      resizeTimeoutRef.current = window.setTimeout(() => {
+        if (zoomMode === 'auto' || zoomMode === 'pageWidth' || zoomMode === 'pageFit') {
+          // Capture current anchor in center of viewport before recalculating scale
+          captureAnchorAtViewportPoint(scrollable.clientWidth / 2, scrollable.clientHeight / 2)
+          recalculateScale(width)
+        }
+      }, 150)
+    })
+
+    resizeObserver.observe(scrollable)
+    return () => {
+      if (resizeTimeoutRef.current) {
+        window.clearTimeout(resizeTimeoutRef.current)
+      }
+      resizeObserver.disconnect()
+    }
+  }, [nativePageSize, zoomMode, recalculateScale, captureAnchorAtViewportPoint])
+
+  // Immediate CSS transform & debounced actual rerender
   const debounceTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
+    if (renderedScale === 0) {
+      if (scale > 0) {
+        setRenderedScale(scale)
+      }
+      return
+    }
+
     if (Math.abs(scale - renderedScale) < 0.001) {
       if (containerRef.current) {
         containerRef.current.style.transform = ''
@@ -462,18 +510,10 @@ export function useZoom({
       return
     }
 
-    // Step A: apply CSS transform immediately
+    // Step A: apply CSS transform immediately for snappy visual feel
     if (containerRef.current && scrollContainerRef.current) {
-      const scrollContainer = scrollContainerRef.current
       const ratio = scale / renderedScale
       containerRef.current.style.transform = `scale(${ratio})`
-      
-      // If we don't have a custom origin set (e.g. from wheel zoom), default to viewport center vertical origin
-      if (!containerRef.current.style.transformOrigin) {
-        const viewY = scrollContainer.clientHeight / 2
-        const anchorY = scrollContainer.scrollTop + viewY
-        containerRef.current.style.transformOrigin = `50% ${anchorY}px`
-      }
     }
 
     // Step B: debounce high-res canvas rendering
@@ -482,10 +522,7 @@ export function useZoom({
     }
 
     debounceTimerRef.current = window.setTimeout(() => {
-      console.log('[ZOOM DIAG] ── Debounce fired: calling setRenderedScale +', scale, 'then rerender()')
       setRenderedScale(scale)
-      // NOTE: rerenderRef.current() fires async — its promise resolves AFTER this line
-      // The post-render diagnostic is invoked via renderCompleteCallbackRef when rerender() finishes
       rerenderRef.current()
     }, 120)
 
@@ -496,11 +533,12 @@ export function useZoom({
     }
   }, [scale, renderedScale])
 
-  // Step C: restore scroll position before browser paints using useLayoutEffect
-  useLayoutEffect(() => {
+  // Define the callback on every render to ensure it has closure over the latest states
+  renderCompleteCallbackRef.current = () => {
     const scrollContainer = scrollContainerRef.current
     if (!scrollContainer) return
 
+    // Reset CSS transform on the container
     if (containerRef.current) {
       containerRef.current.style.transform = ''
       containerRef.current.style.transformOrigin = ''
@@ -508,153 +546,31 @@ export function useZoom({
 
     if (zoomAnchorRef.current) {
       const anchor = zoomAnchorRef.current
-      const layoutEffectTimestamp = performance.now()
-      const msSinceCaptured = layoutEffectTimestamp - anchor.captureTimestamp
       const pageWrapper = pagesRef.current.get(anchor.pageNumber)
 
-      console.group('[ZOOM DIAG] ══════ Scroll Restore (useLayoutEffect) ══════')
-      console.log('  new renderedScale              :', renderedScale)
-      console.log('  ms since zoom was captured     :', msSinceCaptured.toFixed(1))
-      console.log('  scrollTop NOW (before restore) :', scrollContainer.scrollTop)
-      console.log('  scrollTop at capture (before)  :', anchor.scrollTopBefore)
-      console.log('  clientHeight NOW               :', scrollContainer.clientHeight)
-      console.log('  clientHeight at capture        :', anchor.clientHeightBefore)
-
       if (pageWrapper) {
-        const pageRect = pageWrapper.getBoundingClientRect()
-        const containerRect = scrollContainer.getBoundingClientRect()
-
-        // ── The critical diagnostic: is the page already at its new size? ──
-        // IMPORTANT: page wrappers have inline style width/height set directly from
-        // renderedScale × nativePageSize (in memoizedPages). getBoundingClientRect()
-        // reflects the CSS layout box. If the CSS already updated synchronously
-        // (because React re-rendered memoizedPages before this useLayoutEffect ran),
-        // actual height will match the NEW expected height even before the canvas
-        // async paint completes. If a CSS transform is still applied to the container,
-        // getBoundingClientRect() will be scaled by the transform — that's a separate case.
-        const actualHeightNow = pageRect.height
-        const inlineStyleHeight = parseFloat(pageWrapper.style.height || '0')
-        const expectedHeightNew = nativePageSize ? renderedScale * nativePageSize.height : null
-        const expectedHeightOld = nativePageSize ? anchor.scaleAtCapture * nativePageSize.height : null
-        const isAtNewHeight = expectedHeightNew !== null && Math.abs(actualHeightNow - expectedHeightNew) < 1
-        const isAtOldHeight = expectedHeightOld !== null && Math.abs(actualHeightNow - expectedHeightOld) < 1
-        const inlineMatchesNew = expectedHeightNew !== null && Math.abs(inlineStyleHeight - expectedHeightNew) < 1
-        const inlineMatchesOld = expectedHeightOld !== null && Math.abs(inlineStyleHeight - expectedHeightOld) < 1
-
-        console.log(`  anchor page                    : ${anchor.pageNumber}`)
-        console.log(`  page height NOW (getBCR)       : ${actualHeightNow.toFixed(1)}px`)
-        console.log(`  page height (inline style)     : ${inlineStyleHeight.toFixed(1)}px  ← set by React from renderedScale×nativeH`)
-        console.log(`    inline style → ${
-          inlineMatchesNew ? '✅ already at NEW scale' :
-          inlineMatchesOld ? '🔴 still at OLD scale (React memoizedPages not re-rendered yet)' :
-          '⚠️ neither'
-        }`)
-        console.log(`  expected at OLD scale          : ${expectedHeightOld?.toFixed(1)}px`)
-        console.log(`  expected at NEW scale          : ${expectedHeightNew?.toFixed(1)}px`)
-        console.log(
-          `  getBCR height status           :`,
-          isAtNewHeight
-            ? '✅ ALREADY AT NEW HEIGHT — CSS layout updated, timing correct for CSS-based heights'
-            : isAtOldHeight
-            ? '🔴 STILL AT OLD HEIGHT — CSS layout NOT flushed yet (unexpected for useLayoutEffect)'
-            : `⚠️ AT NEITHER (actual=${actualHeightNow.toFixed(1)}, oldExp=${expectedHeightOld?.toFixed(1)}, newExp=${expectedHeightNew?.toFixed(1)}) — likely CSS transform still applied to container`
-        )
-        console.log('  NOTE: Canvas content is async — getBCR=new height does NOT mean canvas has painted yet')
-        console.log('        The post-render log below shows state AFTER the async canvas+textLayer render')
-
-        // ── Cumulative heights above anchor page (measured via getBoundingClientRect)
-        // WARNING: If a CSS scale() transform is still active on the container,
-        // these heights will be SCALED values, not true layout values.
+        // Measure cumulative heights above using styling padding
         const allPageEls = scrollContainer.querySelectorAll('.pdf-page-wrapper')
-        let cumulativeAboveNow_BCR = 0
-        let cumulativeAboveNow_Style = 0
-        const GAP = 20 // margin-bottom on each page wrapper (px) — matches 'margin: 0 auto 20px' in memoizedPages
-        // scrollContainer has py-6 = 24px top padding before the first page;
-        // we must add this to the style-based sum so it matches the BCR-based measurement
-        const SCROLL_PADDING_TOP = 24
-        const pageDiagnostics: Array<{
-          page: number
-          heightBCR: number
-          heightStyle: number
-          expectedNew: number | null
-        }> = []
+        let cumulativeAboveNow_Style = 24 // matching standard scroll padding top (24px)
+        const GAP = 20 // margin-bottom on each page wrapper
+        
         for (let i = 0; i < allPageEls.length; i++) {
           const el = allPageEls[i] as HTMLElement
           const pNum = Number(el.dataset.page)
-          const pRect = el.getBoundingClientRect()
-          const pH_BCR = pRect.height
           const pH_Style = parseFloat(el.style.height || '0')
-          const expH = nativePageSize ? renderedScale * nativePageSize.height : null
-          pageDiagnostics.push({ page: pNum, heightBCR: pH_BCR, heightStyle: pH_Style, expectedNew: expH })
           if (pNum < anchor.pageNumber) {
-            cumulativeAboveNow_BCR += pH_BCR + GAP
             cumulativeAboveNow_Style += pH_Style + GAP
           }
         }
-        // Add top padding to style sum so page 1 starts at 24px, matching BCR
-        cumulativeAboveNow_Style += SCROLL_PADDING_TOP
-        console.log('  page heights NOW               :', pageDiagnostics)
-        console.log(`  cumulative above anchor (BCR)  : ${cumulativeAboveNow_BCR.toFixed(1)}px  ← from getBoundingClientRect`)
-        console.log(`  cumulative above anchor (style): ${cumulativeAboveNow_Style.toFixed(1)}px  ← from inline style + ${SCROLL_PADDING_TOP}px top-padding`)
-        console.log(`  cumulative above (BEFORE zoom) : ${anchor.cumulativeHeightAboveBefore.toFixed(1)}px`)
-        console.log(`  Δ cumulative (BCR new - old)   : ${(cumulativeAboveNow_BCR - anchor.cumulativeHeightAboveBefore).toFixed(1)}px`)
-        console.log(`  Δ cumulative (style new - old) : ${(cumulativeAboveNow_Style - anchor.cumulativeHeightAboveBefore).toFixed(1)}px`)
 
-        // ── Scroll restore math ──
-        // pageTop from getBoundingClientRect: may be affected by CSS transform on container
-        const pageTop_BCR = pageRect.top - containerRect.top + scrollContainer.scrollTop
-        // pageTop from inline style accumulation: true layout position regardless of transform
-        // (cumulativeAboveNow_Style already includes SCROLL_PADDING_TOP)
         const pageTop_Style = cumulativeAboveNow_Style
-        const newScrollTop_BCR = (pageTop_BCR + anchor.documentY * renderedScale) - anchor.viewY
         const newScrollTop_Style = (pageTop_Style + anchor.documentY * renderedScale) - anchor.viewY
-        const oldScrollTop = scrollContainer.scrollTop
 
-        console.log(`  pageTop via BCR                : ${pageTop_BCR.toFixed(1)}px`)
-        console.log(`  pageTop via inline style sum   : ${pageTop_Style.toFixed(1)}px`)
-        console.log(`  anchor.documentY × newScale    : ${(anchor.documentY * renderedScale).toFixed(1)}px`)
-        console.log(`  newScrollTop (BCR method)      : ${newScrollTop_BCR.toFixed(1)}px`)
-        console.log(`  newScrollTop (style method)    : ${newScrollTop_Style.toFixed(1)}px`)
-        console.log(`  oldScrollTop                   : ${oldScrollTop.toFixed(1)}px`)
-        console.log(`  Δ scrollTop (BCR method)       : ${(newScrollTop_BCR - oldScrollTop).toFixed(1)}px`)
-        console.log(`  Δ scrollTop (style method)     : ${(newScrollTop_Style - oldScrollTop).toFixed(1)}px`)
-
-        // ── Register a post-render callback to compare final state ──
-        // This will be invoked by PDFViewer's rerender() after the full async
-        // canvas + text layer render chain resolves for ALL pages.
-        renderCompleteCallbackRef.current = () => {
-          const afterRenderTimestamp = performance.now()
-          const scrollContainer2 = scrollContainerRef.current
-          const pageWrapper2 = pagesRef.current.get(anchor.pageNumber)
-          console.group('[ZOOM DIAG] ══════ Post-Render (async render DONE) ══════')
-          console.log('  ms after zoom capture          :', (afterRenderTimestamp - anchor.captureTimestamp).toFixed(1))
-          console.log('  ms after useLayoutEffect fired :', (afterRenderTimestamp - layoutEffectTimestamp).toFixed(1))
-          if (pageWrapper2) {
-            const finalRect = pageWrapper2.getBoundingClientRect()
-            const finalStyleH = parseFloat(pageWrapper2.style.height || '0')
-            console.log(`  page height FINAL (BCR)        : ${finalRect.height.toFixed(1)}px`)
-            console.log(`  page height FINAL (style)      : ${finalStyleH.toFixed(1)}px`)
-            console.log(`  expected at new scale          : ${expectedHeightNew?.toFixed(1)}px`)
-            const isFinalCorrect = expectedHeightNew !== null && Math.abs(finalRect.height - expectedHeightNew) < 1
-            console.log('  final height correct?          :', isFinalCorrect ? '✅ yes' : '❌ no')
-          }
-          if (scrollContainer2) {
-            console.log('  scrollTop after render done    :', scrollContainer2.scrollTop)
-            console.log('  (This is what the user actually sees after async paint)')
-          }
-          console.groupEnd()
-          renderCompleteCallbackRef.current = null
-        }
-
-        // Apply scroll restore using inline-style-based cumulative heights,
-        // which reflect the NEW layout regardless of any lingering CSS transform
         scrollContainer.scrollTop = newScrollTop_Style
-        console.log(`  ✔ scrollTop SET TO             : ${newScrollTop_Style.toFixed(1)}px  (using style-based pageTop)`)
       }
       zoomAnchorRef.current = null
-      console.groupEnd()
     }
-  }, [renderedScale, pagesRef, scale, nativePageSize])
+  }
 
   // Smooth mouse scroll wheel zoom (Ctrl/Cmd + scroll)
   const handleWheelZoom = useCallback((e: WheelEvent) => {
@@ -664,27 +580,32 @@ export function useZoom({
       const scrollContainer = scrollContainerRef.current
       if (!scrollContainer) return
 
+      const containerRect = scrollContainer.getBoundingClientRect()
+      const mouseX = e.clientX - containerRect.left
+      const mouseY = e.clientY - containerRect.top
+
       const oldScale = scale
-      const delta = e.deltaY > 0 ? -0.04 : 0.04
+      const zoomSpeedFactor = 0.03
+      const delta = (e.deltaY > 0 ? -1 : 1) * oldScale * zoomSpeedFactor
       const newScale = Math.min(4.0, Math.max(0.5, oldScale + delta))
 
       if (Math.abs(oldScale - newScale) < 0.001) return
 
-      const viewY = scrollContainer.clientHeight / 2
-      const anchorY = scrollContainer.scrollTop + viewY
+      // Point in content space before scaling:
+      const contentX = scrollContainer.scrollLeft + mouseX
+      const contentY = scrollContainer.scrollTop + mouseY
 
-      // Set transform origin centered horizontally and at the viewport center vertically
       if (containerRef.current) {
-        containerRef.current.style.transformOrigin = `50% ${anchorY}px`
+        containerRef.current.style.transformOrigin = `${contentX}px ${contentY}px`
       }
 
-      // Capture the viewport center anchor
-      captureViewportCenterAnchor()
+      // Capture anchor at the exact mouse position
+      captureAnchorAtViewportPoint(mouseX, mouseY)
 
       setZoomMode('fixed')
       setFixedScale(newScale)
     }
-  }, [scale, captureViewportCenterAnchor])
+  }, [scale, captureAnchorAtViewportPoint])
 
   // Attach wheel event listener to scroll container
   useEffect(() => {
@@ -704,8 +625,9 @@ export function useZoom({
     scrollContainerRef,
     containerRef,
     setFixedZoom,
-    setAutoFit,
+    setAutoZoom,
     setPageWidth,
+    setPageFit,
     zoomIn,
     zoomOut,
     renderCompleteCallbackRef,
