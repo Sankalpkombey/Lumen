@@ -5,6 +5,7 @@ import type { Document } from '../lib/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { usePDF } from '../hooks/usePDF'
 import { useAnnotations } from '../hooks/useAnnotations'
+import { usePanelState } from '../hooks/usePanelState'
 import PDFViewer from '../components/reader/PDFViewer'
 import ReaderSidebar from '../components/reader/ReaderSidebar'
 import NotesPanel from '../components/reader/NotesPanel'
@@ -40,6 +41,8 @@ export default function ReaderPage() {
   const [loadingDoc, setLoadingDoc] = useState(true)
   const scrollRef = useRef<((page: number) => void) | null>(null)
   const [annotationFocus, setAnnotationFocus] = useState<string | null>(null)
+  const [leftCollapsed, toggleLeft] = usePanelState('lumen-sidebar-left-collapsed', true)
+  const [rightCollapsed, toggleRight] = usePanelState('lumen-sidebar-right-collapsed', true)
 
   const { pdf, totalPages, loading: pdfLoading, error } = usePDF(
     doc?.file_url ?? ''
@@ -49,6 +52,30 @@ export default function ReaderPage() {
     highlights, notes, tags,
     saveHighlight, saveNote, saveTag,
   } = useAnnotations(docId ?? '')
+
+  // Keyboard shortcuts for panel toggles
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (
+        document.activeElement?.tagName === 'INPUT' ||
+        document.activeElement?.tagName === 'TEXTAREA' ||
+        (document.activeElement as HTMLElement)?.isContentEditable
+      ) {
+        return
+      }
+
+      if (e.key === '[') {
+        e.preventDefault()
+        toggleLeft()
+      } else if (e.key === ']') {
+        e.preventDefault()
+        toggleRight()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [toggleLeft, toggleRight])
 
   // Fetch document
   useEffect(() => {
@@ -185,11 +212,13 @@ export default function ReaderPage() {
   }
 
   return (
-    <div className="h-screen w-screen bg-[#141210] grid grid-cols-[280px_1fr_360px] overflow-hidden">
+    <div className="h-screen w-screen bg-[#141210] flex overflow-hidden relative">
       <ReaderSidebar
         doc={doc}
         currentPage={currentPage}
         totalPages={totalPages}
+        collapsed={leftCollapsed}
+        onCollapse={toggleLeft}
       />
 
       {pdf && (
@@ -203,6 +232,8 @@ export default function ReaderPage() {
           onTagClick={handleTagClick}
           docName={doc.name}
           totalPages={totalPages}
+          leftCollapsed={leftCollapsed}
+          rightCollapsed={rightCollapsed}
         />
       )}
 
@@ -211,7 +242,34 @@ export default function ReaderPage() {
         annotationFocus={annotationFocus}
         onAnnotationFocused={() => setAnnotationFocus(null)}
         onScrollToPage={handleScrollToPage}
+        collapsed={rightCollapsed}
+        onCollapse={toggleRight}
       />
+
+      {/* Floating expand buttons */}
+      {leftCollapsed && (
+        <button
+          onClick={toggleLeft}
+          className="fixed top-1.5 left-2.5 z-40 w-7 h-7 bg-[#1c1a18] border border-white/7 hover:border-white/15 rounded-lg flex items-center justify-center text-[#5a5855] hover:text-[#f0ede8] hover:bg-white/5 transition-all shadow-md"
+          title="Expand sidebar"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      )}
+
+      {rightCollapsed && (
+        <button
+          onClick={toggleRight}
+          className="fixed top-1.5 right-2.5 z-40 w-7 h-7 bg-[#1c1a18] border border-white/7 hover:border-white/15 rounded-lg flex items-center justify-center text-[#5a5855] hover:text-[#f0ede8] hover:bg-white/5 transition-all shadow-md"
+          title="Expand panel"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
 
       {/* Selection picker */}
       {selection && (

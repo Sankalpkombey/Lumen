@@ -21,6 +21,8 @@ interface Props {
   onTagClick: (highlightId: string) => void
   docName: string
   totalPages: number
+  leftCollapsed: boolean
+  rightCollapsed: boolean
 }
 
 export default function PDFViewer({
@@ -33,6 +35,8 @@ export default function PDFViewer({
   onTagClick,
   docName,
   totalPages,
+  leftCollapsed,
+  rightCollapsed,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const scaleRef = useRef(1.2)
@@ -566,10 +570,10 @@ export default function PDFViewer({
 
       {/* Top bar */}
       <div className="h-10 bg-[#1c1a18] border-b border-white/7 flex items-center justify-between px-4 flex-shrink-0">
-        <span className="text-xs text-[#5a5855] truncate max-w-xs font-medium">
+        <span className={`text-xs text-[#5a5855] truncate max-w-xs font-medium transition-all duration-200 ${leftCollapsed ? 'pl-10' : ''}`}>
           {docName.replace('.pdf', '')}
         </span>
-        <span className="text-xs text-[#3a3835]">
+        <span className={`text-xs text-[#3a3835] transition-all duration-200 ${rightCollapsed ? 'pr-10' : ''}`}>
           p.{currentPage} / {totalPages}
         </span>
       </div>
