@@ -151,13 +151,13 @@ export default function ReaderPage() {
       selection.rangeInfo
     )
 
-  if (highlight) {
-    setPendingHighlight({ id: highlight.id, text: highlight.text })
-    setShowNoteModal(true)
-  }
+    if (highlight) {
+      setPendingHighlight({ id: highlight.id, text: highlight.text })
+      setShowNoteModal(true)
+    }
 
-  window.getSelection()?.removeAllRanges()
-}, [selection, saveHighlight])
+    window.getSelection()?.removeAllRanges()
+  }, [selection, saveHighlight])
 
   const handleSaveNote = useCallback(async (
     content: string,

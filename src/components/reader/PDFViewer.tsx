@@ -93,27 +93,30 @@ export default function PDFViewer({
   }, [pdf])
 
   // ─── Overlay-based highlight rendering ──────────────────────────────────
-  const applyHighlightsToTextLayer = useCallback(() => {
-    if (!containerRef.current || !pagesReadyRef.current) return
+  // ─── Overlay-based highlight rendering ──────────────────────────────────
+  const applyHighlightsForPage = useCallback((pageNumber: number) => {
+    if (!containerRef.current) return
 
-    // Clear previous overlay highlights and tag chips
-    containerRef.current.querySelectorAll('.highlight-rect').forEach(el => el.remove())
-    containerRef.current.querySelectorAll('.highlight-tag-chip').forEach(el => el.remove())
+    const pageWrapper = containerRef.current.querySelector(
+      `.pdf-page-wrapper[data-page="${pageNumber}"]`
+    ) as HTMLDivElement | null
+
+    const textLayer = containerRef.current.querySelector(
+      `.textLayer[data-page="${pageNumber}"]`
+    ) as HTMLDivElement | null
+
+    const highlightLayer = containerRef.current.querySelector(
+      `.highlight-layer[data-page="${pageNumber}"]`
+    ) as HTMLDivElement | null
+
+    if (!pageWrapper || !textLayer || !highlightLayer) return
+
+    // Clear previous overlay highlights and tag chips for this page wrapper only
+    highlightLayer.querySelectorAll('.highlight-rect').forEach(el => el.remove())
+    highlightLayer.querySelectorAll('.highlight-tag-chip').forEach(el => el.remove())
 
     highlights.forEach(highlight => {
-      const pageWrapper = containerRef.current?.querySelector(
-        `.pdf-page-wrapper[data-page="${highlight.page_number}"]`
-      ) as HTMLDivElement | null
-
-      const textLayer = containerRef.current?.querySelector(
-        `.textLayer[data-page="${highlight.page_number}"]`
-      ) as HTMLDivElement | null
-
-      const highlightLayer = containerRef.current?.querySelector(
-        `.highlight-layer[data-page="${highlight.page_number}"]`
-      ) as HTMLDivElement | null
-
-      if (!pageWrapper || !textLayer || !highlightLayer) return
+      if (highlight.page_number !== pageNumber) return
 
       const highlightText = highlight.text.trim()
       if (!highlightText) return
@@ -200,15 +203,28 @@ export default function PDFViewer({
     })
   }, [highlights, notes, onTagClick])
 
+  const applyHighlightsToTextLayer = useCallback(() => {
+    if (!containerRef.current || !pagesReadyRef.current) return
+
+    // Apply highlights to all currently rendered page wrappers
+    pagesRef.current.forEach((pageWrapper, pageNumber) => {
+      if (pageWrapper.dataset.rendered === 'true') {
+        applyHighlightsForPage(pageNumber)
+      }
+    })
+  }, [applyHighlightsForPage])
+
   // Keep ref in sync so render effect can call latest version without depending on it
   applyHighlightsRef.current = applyHighlightsToTextLayer
 
-  // ─── Render a single page ─────────────────────────────────────────────────
+  // Active rendering task cancellation management
+  const activeRenderTasksRef = useRef<Map<number, any>>(new Map())
+  const activeTextLayersRef = useRef<Map<number, any>>(new Map())
+
   // ─── Render a single page ─────────────────────────────────────────────────
   const renderPage = useCallback(async (
     pageNumber: number,
-    targetContainer: HTMLElement | DocumentFragment,
-    newPagesMap: Map<number, HTMLDivElement>
+    pageWrapper: HTMLDivElement
   ) => {
     if (!pdf || renderedScale === 0) return
 
@@ -220,20 +236,9 @@ export default function PDFViewer({
     const cssViewport = page.getViewport({ scale: baseScale })
     const renderViewport = page.getViewport({ scale: baseScale * dpr })
 
-    // Page wrapper — CSS size
-    const pageWrapper = document.createElement('div')
-    pageWrapper.className = 'pdf-page-wrapper'
-    pageWrapper.dataset.page = String(pageNumber)
-    pageWrapper.style.cssText = `
-      position: relative;
-      margin: 0 auto 20px;
-      width: ${cssViewport.width}px;
-      height: ${cssViewport.height}px;
-      background: #ffffff;
-      border-radius: 2px;
-      overflow: visible;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 4px 24px rgba(0,0,0,0.18);
-    `
+    // Ensure layout size is correct (placeholders should be sized already, but synchronize just in case)
+    pageWrapper.style.width = `${cssViewport.width}px`
+    pageWrapper.style.height = `${cssViewport.height}px`
 
     // Canvas — physical pixel size
     const canvas = document.createElement('canvas')
@@ -281,21 +286,32 @@ export default function PDFViewer({
     textLayerDiv.style.setProperty('--scale-round-x', '1px')
     textLayerDiv.style.setProperty('--scale-round-y', '1px')
 
-    // Order: canvas → text layer → highlight layer (highlight on top with pointer-events: none)
+    // Append to placeholder wrapper
+    pageWrapper.innerHTML = ''
     pageWrapper.appendChild(canvas)
     pageWrapper.appendChild(textLayerDiv)
     pageWrapper.appendChild(highlightLayer)
-    targetContainer.appendChild(pageWrapper)
-    newPagesMap.set(pageNumber, pageWrapper)
 
-    // Render at full DPI
-    await page.render({
+    // Render page canvas
+    const renderTask = page.render({
       canvas: canvas,
       canvasContext: ctx,
       viewport: renderViewport,
       intent: 'display',
       annotationMode: 0,
-    }).promise
+    })
+    activeRenderTasksRef.current.set(pageNumber, renderTask)
+
+    try {
+      await renderTask.promise
+    } catch (err: any) {
+      if (err.name === 'RenderingCancelledException') {
+        return // rendering cancelled
+      }
+      throw err
+    } finally {
+      activeRenderTasksRef.current.delete(pageNumber)
+    }
 
     // Text layer at CSS viewport for correct selection positions
     const textContent = await page.getTextContent({
@@ -307,9 +323,17 @@ export default function PDFViewer({
       container: textLayerDiv,
       viewport: cssViewport,
     })
-    await textLayer.render()
+    activeTextLayersRef.current.set(pageNumber, textLayer)
 
-    // ── endOfContent div — enables full-line text selection (same as PDF.js viewer) ──
+    try {
+      await textLayer.render()
+    } catch (err: any) {
+      return // text layer rendering cancelled/errored
+    } finally {
+      activeTextLayersRef.current.delete(pageNumber)
+    }
+
+    // ── endOfContent div — enables full-line text selection ──
     const endOfContent = document.createElement('div')
     endOfContent.className = 'endOfContent'
     textLayerDiv.appendChild(endOfContent)
@@ -318,51 +342,125 @@ export default function PDFViewer({
     textLayerDiv.addEventListener('mousedown', () => {
       textLayerDiv.classList.add('selecting')
     })
-
   }, [pdf, renderedScale])
 
-  // ─── Render all pages ─────────────────────────────────────────────────────
+  const recyclePage = useCallback((pageNumber: number, pageWrapper: HTMLDivElement) => {
+    // 1. Cancel active render task
+    const activeTask = activeRenderTasksRef.current.get(pageNumber)
+    if (activeTask) {
+      activeTask.cancel()
+      activeRenderTasksRef.current.delete(pageNumber)
+    }
+
+    // 2. Cancel active text layer render
+    const activeText = activeTextLayersRef.current.get(pageNumber)
+    if (activeText) {
+      activeText.cancel()
+      activeTextLayersRef.current.delete(pageNumber)
+    }
+
+    // 3. Clear container DOM and mark as unrendered
+    pageWrapper.innerHTML = ''
+    pageWrapper.dataset.rendered = 'false'
+  }, [])
+
+  // ─── Render placeholders on mount and scale change ───────────────────────
   useEffect(() => {
-    if (!pdf || !containerRef.current || renderedScale === 0) return
+    if (!pdf || !nativePageSize || renderedScale === 0 || !containerRef.current) return
 
     renderingRef.current = true
     pagesReadyRef.current = false
 
-    let active = true
+    const fragment = document.createDocumentFragment()
+    const newPagesMap = new Map<number, HTMLDivElement>()
 
-    async function renderAll() {
-      const fragment = document.createDocumentFragment()
-      const newPagesMap = new Map<number, HTMLDivElement>()
+    const width = nativePageSize.width * renderedScale
+    const height = nativePageSize.height * renderedScale
 
-      for (let i = 1; i <= pdf.numPages; i++) {
-        if (!active) break
-        await renderPage(i, fragment, newPagesMap)
-      }
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const pageWrapper = document.createElement('div')
+      pageWrapper.className = 'pdf-page-wrapper'
+      pageWrapper.dataset.page = String(i)
+      pageWrapper.dataset.rendered = 'false'
+      pageWrapper.style.cssText = `
+        position: relative;
+        margin: 0 auto 20px;
+        width: ${width}px;
+        height: ${height}px;
+        background: #ffffff;
+        border-radius: 2px;
+        overflow: visible;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 4px 24px rgba(0,0,0,0.18);
+      `
+      fragment.appendChild(pageWrapper)
+      newPagesMap.set(i, pageWrapper)
+    }
 
-      if (active && containerRef.current) {
-        containerRef.current.innerHTML = ''
-        containerRef.current.appendChild(fragment)
+    containerRef.current.innerHTML = ''
+    containerRef.current.appendChild(fragment)
 
-        pagesRef.current.clear()
-        newPagesMap.forEach((val, key) => {
-          pagesRef.current.set(key, val)
+    pagesRef.current.clear()
+    newPagesMap.forEach((val, key) => {
+      pagesRef.current.set(key, val)
+    })
+
+    renderingRef.current = false
+    pagesReadyRef.current = true
+
+    if (renderCompleteCallbackRef.current) {
+      renderCompleteCallbackRef.current()
+    }
+  }, [pdf, nativePageSize, renderedScale, rerenderTrigger])
+
+  // ─── Intersection observer — render/recycle pages on demand ───────────────
+  useEffect(() => {
+    const container = containerRef.current
+    const scrollContainer = scrollContainerRef.current
+    if (!container || !scrollContainer || !pdf || !nativePageSize || renderedScale === 0) return
+
+    const pageWrappers = container.querySelectorAll('.pdf-page-wrapper')
+    if (pageWrappers.length === 0) return
+
+    const renderObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const pageWrapper = entry.target as HTMLDivElement
+          const pageNumber = Number(pageWrapper.dataset.page)
+          if (!pageNumber) return
+
+          if (entry.isIntersecting) {
+            if (pageWrapper.dataset.rendered !== 'true') {
+              pageWrapper.dataset.rendered = 'true'
+              renderPage(pageNumber, pageWrapper).then(() => {
+                applyHighlightsForPage(pageNumber)
+              }).catch((err) => {
+                console.error(`Failed to render page ${pageNumber}:`, err)
+                pageWrapper.dataset.rendered = 'false'
+              })
+            }
+          } else {
+            if (pageWrapper.dataset.rendered === 'true') {
+              recyclePage(pageNumber, pageWrapper)
+            }
+          }
         })
-
-        renderingRef.current = false
-        pagesReadyRef.current = true
-        applyHighlightsRef.current()
-
-        if (renderCompleteCallbackRef.current) {
-          renderCompleteCallbackRef.current()
-        }
+      },
+      {
+        root: scrollContainer,
+        rootMargin: '800px 0px 800px 0px',
       }
-    }
+    )
 
-    renderAll()
+    pageWrappers.forEach((wrapper) => renderObserver.observe(wrapper))
+
     return () => {
-      active = false
+      renderObserver.disconnect()
+      activeRenderTasksRef.current.forEach((task) => task.cancel())
+      activeRenderTasksRef.current.clear()
+      activeTextLayersRef.current.forEach((text) => text.cancel())
+      activeTextLayersRef.current.clear()
     }
-  }, [pdf, renderedScale, renderPage, rerenderTrigger])
+  }, [pdf, nativePageSize, renderedScale, renderPage, recyclePage, applyHighlightsForPage])
 
   // ─── Redraw when highlights or notes update ───────────────────────────────
   useEffect(() => {
